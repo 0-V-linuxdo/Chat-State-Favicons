@@ -1,0 +1,156 @@
+// ==UserScript==
+// @name         [Gemini Team] State Favicons [20251201]+icon
+// @namespace    0_V userscripts/[Gemini Team] State Favicon
+// @description  Google Gemini 标签页实时状态指示：🔄 流式中（旋转）· ✔️ 完成 · 👍 可再次发送 · 🚫 出错 · 无输入时恢复默认
+// @version      [20251201]
+// @match        https://business.gemini.google/*
+// @grant        none
+// @icon         https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/site_icons/gemini_rotate.svg
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  /* ---------- 1. 统一资源 ---------- */
+  const ICONS = {
+    rotate: makeSVG('🔄'),
+    done  : makeSVG('✔️'),
+    ready : makeSVG('👍'),
+    error : makeSVG('🚫')
+  };
+
+  function makeSVG(emoji) {
+    return `data:image/svg+xml,${encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+         <text y=".9em" font-size="90">${emoji}</text>
+       </svg>`
+    )}`;
+  }
+
+  /* ---------- 2. favicon DOM ---------- */
+  const ORIGINAL_FAVICON =
+    document.querySelector('link[rel~="icon"]')?.href ||
+    'https://ssl.gstatic.com/images/branding/product/1x/assistant_48dp.png';
+
+  let fav = document.querySelector('#state-favicon');
+  if (!fav) {
+    fav       = document.createElement('link');
+    fav.id    = 'state-favicon';
+    fav.rel   = 'icon';
+    fav.type  = 'image/svg+xml';
+    document.head.appendChild(fav);
+
+    const css = document.createElement('style');
+    css.textContent = `
+      @keyframes favicon-spin { to { transform: rotate(360deg); } }
+      link#state-favicon.spin { animation: favicon-spin 1s linear infinite; }
+    `;
+    document.head.appendChild(css);
+  }
+
+  function setFavicon(key) {
+    fav.href = ICONS[key] ?? ORIGINAL_FAVICON;
+    (key === 'rotate') ? fav.classList.add('spin') : fav.classList.remove('spin');
+  }
+
+  /* ---------- 3. 深度查询工具（穿透 open shadow DOM） ---------- */
+  function queryDeep(selector, root = document) {
+    const hit = root.querySelector(selector);
+    if (hit) return hit;
+    const walker = document.createNodeIterator(root, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (node.shadowRoot) {
+        const found = queryDeep(selector, node.shadowRoot);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  /* ---------- 4. Gemini 适配封装 ---------- */
+  const sel = {
+    composer : 'form.omnibar',
+    stopBtn  : 'md-icon-button.send-button.stop',
+    sendBtn  : 'md-icon-button.send-button.submit',
+    toastErr : 'mwc-snackbar[open], [aria-live="assertive"]'
+  };
+
+  function getComposer()      { return queryDeep(sel.composer); }
+  function isStreaming()      { return !!queryDeep(sel.stopBtn); }
+  function hasError()         { return !!queryDeep(sel.toastErr); }
+  function inputIsEmpty() {
+    /* 规则：submit 按钮存在但带 disabled → 输入为空
+       submit 按钮存在且未禁用     → 有文本（ready） */
+    const btn = queryDeep(sel.sendBtn);
+    if (!btn) return true;           // 流式中或 DOM 未渲染好
+    return btn.hasAttribute('disabled');
+  }
+
+  /* ---------- 5. 状态机 ---------- */
+  const state = { wasStreaming:false, justFinished:false };
+
+  function evaluate() {
+    /* 1) error */
+    if (hasError()) {
+      setFavicon('error');
+      state.wasStreaming  = false;
+      state.justFinished  = false;
+      return;
+    }
+
+    /* 2) streaming */
+    if (isStreaming()) {
+      state.wasStreaming  = true;
+      state.justFinished  = false;
+      setFavicon('rotate');
+      return;
+    }
+
+    /* 3) 刚结束 */
+    if (state.wasStreaming) {
+      state.wasStreaming = false;
+      state.justFinished = true;
+      setFavicon('done');          // ✔️
+    }
+
+    if (state.justFinished) {
+      if (!inputIsEmpty()) {       // 用户开始输入
+        setFavicon('ready');       // 👍
+        state.justFinished = false;
+      }
+      return;
+    }
+
+    /* 4) 默认 ready / wait */
+    inputIsEmpty() ? setFavicon('wait') : setFavicon('ready');
+  }
+
+  /* ---------- 6. 监听 + 轮询双保险 ---------- */
+  let localObs;
+  function hookObserver() {
+    const cmp = getComposer();
+    if (!cmp) return;
+    const target = cmp;                // form 本身即可观察到按钮插入/删除
+    if (localObs) localObs.disconnect();
+    localObs = new MutationObserver(evaluate);
+    localObs.observe(target, {
+      childList:true,
+      subtree:true,
+      attributes:true,
+      characterData:true
+    });
+  }
+
+  /* 初次挂载 */
+  hookObserver();
+  evaluate();
+
+  /* 轮询兜底（每 400 ms）*/
+  setInterval(() => {
+    if (!document.contains(fav)) document.head.appendChild(fav); // 防止被站点替换
+    hookObserver();
+    evaluate();
+  }, 400);
+
+})();
