@@ -1,0 +1,427 @@
+// ==UserScript==
+// @name         [Gemini] State Favicons (20251201) +icon
+// @namespace    0_V userscripts/[Gemini] State Favicons
+// @description  Dynamic favicon for Gemini: 🔄 streaming · ✔️ done · 👍 ready · 🚫 error · default waiting (Angular Material UI)
+// @version      20251201.1
+//
+// @match        https://gemini.google.com/*
+//
+// @icon         https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/site_icons/gemini_rotate.svg
+// @grant        GM_getValue
+// @grant        GM_setValue
+// ==/UserScript==
+
+(() => {
+    'use strict';
+
+    /* ----------  SVG emoji sprites  ---------- */
+    const ICONS = {
+        rotate : svg('🔄'),
+        done   : svg('✔️'),
+        ready  : svg('👍'),
+        error  : svg('🚫')
+    };
+
+    function svg(emoji) {
+        return `data:image/svg+xml,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${emoji}</text></svg>`
+        )}`;
+    }
+
+    /* ----------  Favicon management  ---------- */
+    const originalFaviconHref =
+        document.querySelector('link[rel~="icon"]')?.href ||
+        'https://www.gstatic.com/lamda/images/gemini_sparkle_v002_d4735304ff6292a690345.svg';
+
+    let favicon = document.querySelector('#state-favicon');
+    if (!favicon) {
+        favicon = document.createElement('link');
+        favicon.id   = 'state-favicon';
+        favicon.rel  = 'icon';
+        favicon.type = 'image/svg+xml';
+        document.head.appendChild(favicon);
+
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes favicon-spin {
+                to { transform: rotate(360deg); }
+            }
+            link#state-favicon.spin {
+                animation: favicon-spin 1s linear infinite;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function setFavicon(key) {
+        const icon = ICONS[key] ?? originalFaviconHref;
+        favicon.href = icon;
+        key === 'rotate' ? favicon.classList.add('spin') : favicon.classList.remove('spin');
+    }
+
+    /* ----------  Gemini-specific selectors  ---------- */
+    const SELECTORS = {
+        // 输入区域（可能是多种实现）
+        inputArea: [
+            'rich-textarea[placeholder]',
+            '[contenteditable="true"][role="textbox"]',
+            'textarea[placeholder]',
+            '.input-area-wrapper',
+            '.ql-editor'
+        ],
+
+        // 发送按钮容器（关键状态指示器）
+        sendContainer: [
+            '.send-button-container',
+            'button[aria-label*="Send"]',
+            'button.send-button'
+        ],
+
+        // 停止按钮（流式输出指示器）
+        stopButton: [
+            'button.stop[aria-label*="Stop"]',
+            'button[aria-label="Stop response"]',
+            'button.stop .stop-icon',
+            'mat-icon[fonticon="stop"]'
+        ],
+
+        // 错误提示（多种可能的错误显示）
+        errorIndicators: [
+            '.error-card',
+            '[class*="error"]',
+            '.mdc-snackbar',
+            '[role="alert"]',
+            'button[aria-label*="Try again"]',
+            'button[aria-label*="Retry"]',
+            'button[aria-label*="Regenerate"]'
+        ],
+
+        // 麦克风按钮（输入状态的辅助指示）
+        micButton: [
+            '.mic-button-container',
+            'button[aria-label*="microphone" i]',
+            'speech-dictation-mic-button'
+        ]
+    };
+
+    /* ----------  Helper functions  ---------- */
+    const state = {
+        wasStreaming: false,
+        justFinished: false,
+        lastCheckTime: 0
+    };
+
+    // 查找元素（支持多个选择器降级）
+    function findElement(selectors) {
+        if (typeof selectors === 'string') selectors = [selectors];
+        for (const selector of selectors) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+        }
+        return null;
+    }
+
+    // 查找所有匹配元素
+    function findElements(selectors) {
+        if (typeof selectors === 'string') selectors = [selectors];
+        const results = [];
+        for (const selector of selectors) {
+            results.push(...document.querySelectorAll(selector));
+        }
+        return results;
+    }
+
+    // 检测输入框是否为空
+    function inputIsEmpty() {
+        const inputEl = findElement(SELECTORS.inputArea);
+        if (!inputEl) return true;
+
+        // 处理 contenteditable
+        if (inputEl.contentEditable === 'true') {
+            const text = inputEl.textContent || inputEl.innerText || '';
+            return text.replace(/\u200B/g, '').trim().length === 0;
+        }
+
+        // 处理 textarea 或 input
+        if (inputEl.value !== undefined) {
+            return inputEl.value.trim().length === 0;
+        }
+
+        // 其他情况
+        return true;
+    }
+
+    // 检测是否正在流式输出（多重信号检测）
+    function isStreaming() {
+        // 方法1：检测 stop 按钮
+        const stopBtn = findElement(SELECTORS.stopButton);
+        if (stopBtn && stopBtn.offsetParent !== null) {
+            return true;
+        }
+
+        // 方法2：检测发送按钮的 stop class
+        const sendContainer = findElement(SELECTORS.sendContainer);
+        if (sendContainer) {
+            const button = sendContainer.querySelector('button.stop');
+            if (button) return true;
+        }
+
+        // 方法3：检测 stop icon 的可见性
+        const stopIcons = document.querySelectorAll('.stop-icon, mat-icon[fonticon="stop"]');
+        for (const icon of stopIcons) {
+            if (icon.offsetParent !== null && !icon.classList.contains('hidden')) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // 检测是否有错误（增强版）
+    function hasError() {
+        // 检查所有可能的错误指示器
+        const errorElements = findElements(SELECTORS.errorIndicators);
+
+        for (const el of errorElements) {
+            // 检查可见性
+            if (el.offsetParent === null) continue;
+
+            // 检查文本内容
+            const text = el.textContent || '';
+            if (/error|failed|retry|try again|regenerate/i.test(text)) {
+                return true;
+            }
+
+            // 检查 aria 标签
+            const ariaLabel = el.getAttribute('aria-label') || '';
+            if (/error|failed|retry/i.test(ariaLabel)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // 检测是否可以发送（发送按钮已启用）
+    function canSend() {
+        const sendContainer = findElement(SELECTORS.sendContainer);
+        if (!sendContainer) return false;
+
+        const button = sendContainer.querySelector('button');
+        if (!button) return false;
+
+        // 检查 aria-disabled
+        const ariaDisabled = button.getAttribute('aria-disabled');
+        if (ariaDisabled === 'true') return false;
+
+        // 检查 disabled 属性
+        if (button.disabled) return false;
+
+        // 检查 class
+        if (sendContainer.classList.contains('disabled')) return false;
+
+        // 检查容器的 visible class
+        return sendContainer.classList.contains('visible') ||
+               button.getAttribute('tabindex') !== '-1';
+    }
+
+    /* ----------  Core state evaluator (with debounce)  ---------- */
+    let evaluateTimer = null;
+
+    function evaluateState() {
+        // 简单的防抖（避免 Angular 的高频更新）
+        const now = Date.now();
+        if (now - state.lastCheckTime < 50) return;
+        state.lastCheckTime = now;
+
+        try {
+            /* Priority 1: Error state */
+            if (hasError()) {
+                setFavicon('error');
+                Object.assign(state, { wasStreaming: false, justFinished: false });
+                return;
+            }
+
+            /* Priority 2: Streaming state */
+            if (isStreaming()) {
+                Object.assign(state, { wasStreaming: true, justFinished: false });
+                setFavicon('rotate');
+                return;
+            }
+
+            /* Priority 3: Just finished streaming */
+            if (state.wasStreaming) {
+                state.wasStreaming = false;
+                state.justFinished = true;
+                setFavicon('done');
+            }
+
+            /* Priority 4: Handle post-streaming state */
+            if (state.justFinished) {
+                // 如果用户开始输入新内容，切换到 ready
+                if (!inputIsEmpty()) {
+                    setFavicon('ready');
+                    state.justFinished = false;
+                }
+                return;
+            }
+
+            /* Priority 5: Normal input state */
+            if (canSend()) {
+                setFavicon('ready');
+            } else if (inputIsEmpty()) {
+                setFavicon('wait');
+            } else {
+                // 输入框有内容但按钮未启用（可能在处理中）
+                setFavicon('wait');
+            }
+
+        } catch (error) {
+            console.error('[Gemini State Favicons] Error in evaluateState:', error);
+        }
+    }
+
+    /* ----------  Smart observer system  ---------- */
+    let composerRoot = null;
+    let localObserver = null;
+    let debounceTimer = null;
+
+    // 节流版的状态评估
+    function debouncedEvaluate() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(evaluateState, 100);
+    }
+
+    // 查找输入区域的根容器
+    function findComposerRoot() {
+        // 尝试多种可能的根容器
+        const candidates = [
+            'chat-window',
+            'app-gemini-chat-window',
+            '.input-area-container',
+            '.composer-container',
+            'form',
+            '[role="main"]'
+        ];
+
+        for (const selector of candidates) {
+            const el = document.querySelector(selector);
+            if (el) return el;
+        }
+
+        // 降级到 body（最后的选择）
+        return document.body;
+    }
+
+    // 观察输入区域
+    function observeComposer() {
+        if (localObserver) {
+            localObserver.disconnect();
+        }
+
+        composerRoot = findComposerRoot();
+        if (!composerRoot) {
+            console.warn('[Gemini State Favicons] Composer root not found');
+            return;
+        }
+
+        localObserver = new MutationObserver(debouncedEvaluate);
+
+        localObserver.observe(composerRoot, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: [
+                'aria-disabled',
+                'aria-label',
+                'disabled',
+                'class',
+                'style',
+                'tabindex'
+            ]
+        });
+
+        evaluateState();
+    }
+
+    // 全局观察器（处理页面导航和动态加载）
+    const globalObserver = new MutationObserver(() => {
+        if (!composerRoot || !document.contains(composerRoot)) {
+            observeComposer();
+        }
+        debouncedEvaluate();
+    });
+
+    globalObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+
+    /* ----------  Handle input events (additional monitoring)  ---------- */
+    function attachInputListeners() {
+        // 监听输入事件（直接响应）
+        document.addEventListener('input', evaluateState, { passive: true });
+        document.addEventListener('change', evaluateState, { passive: true });
+
+        // 监听点击事件（可能点击发送/停止按钮）
+        document.addEventListener('click', (e) => {
+            const target = e.target;
+            if (target.closest('button.send-button, button.stop')) {
+                // 延迟一点检查，等待 DOM 更新
+                setTimeout(evaluateState, 50);
+            }
+        }, { passive: true });
+    }
+
+    /* ----------  Initialization  ---------- */
+    function init() {
+        console.log('[Gemini State Favicons] Initializing...');
+
+        // 等待页面基本加载完成
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+            return;
+        }
+
+        // 设置初始状态
+        setFavicon('wait');
+
+        // 延迟初始化（等待 Angular 应用加载）
+        setTimeout(() => {
+            observeComposer();
+            attachInputListeners();
+            evaluateState();
+        }, 1000);
+
+        // 再次检查（确保捕获）
+        setTimeout(evaluateState, 2000);
+    }
+
+    init();
+
+    /* ----------  Handle SPA navigation  ---------- */
+    // Gemini 是 SPA，需要监听路由变化
+    let lastUrl = location.href;
+    new MutationObserver(() => {
+        const url = location.href;
+        if (url !== lastUrl) {
+            lastUrl = url;
+            console.log('[Gemini State Favicons] URL changed, reinitializing...');
+
+            // 重置状态
+            Object.assign(state, { wasStreaming: false, justFinished: false });
+
+            // 重新初始化
+            setTimeout(() => {
+                observeComposer();
+                evaluateState();
+            }, 500);
+        }
+    }).observe(document.querySelector('head > title') || document.body, {
+        subtree: true,
+        characterData: true,
+        childList: true
+    });
+
+})();
