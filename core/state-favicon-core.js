@@ -106,7 +106,7 @@
         const favicon = ensureFaviconLink(doc, faviconId, iconSet.wait);
         ensureSpinStyle(doc, styleId, faviconId);
 
-        const state = { wasStreaming:false, justFinished:false };
+        const state = { wasStreaming:false, justFinished:false, streamContext:null };
         let composerRoot = queryAny(doc, selectors.composer);
         let localObserver = null;
 
@@ -155,25 +155,40 @@
         }
 
         function evaluateState() {
+            const contextKey = typeof hooks.getContextKey === 'function' ? hooks.getContextKey(ctx) : null;
+
             if (hasError()) {
                 setFavicon('error');
                 state.wasStreaming = false;
                 state.justFinished = false;
+                state.streamContext = null;
                 return;
             }
 
             if (isStreaming()) {
                 state.wasStreaming = true;
                 state.justFinished = false;
+                state.streamContext = contextKey;
                 setFavicon('rotate');
                 return;
             }
 
             if (state.wasStreaming) {
+                // Only enter "done" when the context is unchanged or unknown; otherwise reset flags.
+                const sameContext =
+                    !state.streamContext ||
+                    !contextKey ||
+                    state.streamContext === contextKey;
                 state.wasStreaming = false;
-                state.justFinished = true;
-                setFavicon('done');
+                if (sameContext) {
+                    state.justFinished = true;
+                    setFavicon('done');
+                } else {
+                    state.justFinished = false;
+                    state.streamContext = null;
+                }
             }
+
             if (state.justFinished) {
                 if (!inputIsEmpty()) {
                     setFavicon('ready');
@@ -182,6 +197,7 @@
                 return;
             }
 
+            state.streamContext = null;
             inputIsEmpty() ? setFavicon('wait') : setFavicon('ready');
         }
 
@@ -251,4 +267,3 @@
         DEFAULT_SELECTORS
     };
 });
-
