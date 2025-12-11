@@ -13,12 +13,12 @@
  *   - removeCompetitors: remove other icon links (default: true)
  *   - insertFirst: insert managed link as first child of head (default: true)
  *   - trackAttributes: attributes to watch for icon changes (default: ['href','rel'])
- *   - onEnsure: callback invoked after ensure() re-applies the managed link
  *
  * Update log:
  * - 2025-12-12: Watch for head icon removal/replacement and self-removal; restore managed favicon
  *   immediately to keep updates timely on SPA head rewrites.
- * - 2025-12-12: Add onEnsure hook for sites that want to re-evaluate state after guard restores.
+ * - 2025-12-13: Preserve last known managed href when the icon link is removed/re-added so the
+ *   current state (rotate/ready/done) survives SPA head resets without flashing fallback.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -40,9 +40,9 @@
         const insertFirst = opts.insertFirst !== false;
         const removeCompetitors = opts.removeCompetitors !== false;
         const trackAttributes = opts.trackAttributes || ['href', 'rel'];
-        const onEnsure = typeof opts.onEnsure === 'function' ? opts.onEnsure : null;
 
         let waitHref = opts.defaultHref || null;
+        let lastHref = waitHref;
         let observer = null;
 
         const isIconLink = (node) =>
@@ -66,7 +66,7 @@
             }
 
             let link = doc.getElementById(iconId);
-            const href = (link && link.href) || waitHref;
+            const href = (link && link.href) || lastHref || waitHref;
             if (!link || !head.contains(link)) {
                 link = doc.createElement('link');
                 link.id = iconId;
@@ -76,11 +76,9 @@
             link.type = type;
             if (sizes) link.setAttribute('sizes', sizes);
             if (href) link.href = href;
+            if (link.href) lastHref = link.href;
 
             if (insertFirst && head.firstChild !== link) head.insertBefore(link, head.firstChild);
-            if (onEnsure) {
-                try { onEnsure(link); } catch (e) { /* ignore guard callbacks */ }
-            }
             return link;
         }
 
@@ -92,22 +90,31 @@
             observer = new MutationObserver((list) => {
                 let touched = false;
                 for (const m of list) {
-                    if (m.type === 'attributes' && isIconLink(m.target) && m.target.id !== iconId) {
+                    if (m.type === 'attributes' && isIconLink(m.target)) {
+                        if (m.target.id === iconId) {
+                            if (m.target.href) lastHref = m.target.href;
+                            continue;
+                        }
                         if (m.target.href) waitHref = m.target.href;
                         touched = true;
                         break;
                     }
                     if (m.type === 'childList') {
                         for (const node of m.addedNodes || []) {
-                            if (isIconLink(node) && node.id !== iconId) {
-                                if (node.href) waitHref = node.href;
-                                touched = true;
-                                break;
+                            if (isIconLink(node)) {
+                                if (node.id === iconId) {
+                                    if (node.href) lastHref = node.href;
+                                } else if (node.href) {
+                                    waitHref = node.href;
+                                    touched = true;
+                                    break;
+                                }
                             }
                         }
                         if (touched) break;
                         for (const node of m.removedNodes || []) {
-                            if ((node.id === iconId) || isIconLink(node)) {
+                            if (isIconLink(node)) {
+                                if (node.id === iconId && node.href) lastHref = node.href;
                                 touched = true;
                                 break;
                             }
