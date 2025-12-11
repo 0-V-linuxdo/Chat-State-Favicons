@@ -13,10 +13,12 @@
  *   - removeCompetitors: remove other icon links (default: true)
  *   - insertFirst: insert managed link as first child of head (default: true)
  *   - trackAttributes: attributes to watch for icon changes (default: ['href','rel'])
+ *   - onEnsure: callback invoked after ensure() re-applies the managed link
  *
  * Update log:
  * - 2025-12-12: Watch for head icon removal/replacement and self-removal; restore managed favicon
  *   immediately to keep updates timely on SPA head rewrites.
+ * - 2025-12-12: Add onEnsure hook for sites that want to re-evaluate state after guard restores.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -38,6 +40,7 @@
         const insertFirst = opts.insertFirst !== false;
         const removeCompetitors = opts.removeCompetitors !== false;
         const trackAttributes = opts.trackAttributes || ['href', 'rel'];
+        const onEnsure = typeof opts.onEnsure === 'function' ? opts.onEnsure : null;
 
         let waitHref = opts.defaultHref || null;
         let observer = null;
@@ -75,6 +78,9 @@
             if (href) link.href = href;
 
             if (insertFirst && head.firstChild !== link) head.insertBefore(link, head.firstChild);
+            if (onEnsure) {
+                try { onEnsure(link); } catch (e) { /* ignore guard callbacks */ }
+            }
             return link;
         }
 
