@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core
+ * State Favicon Core [20251211] v1.0.0
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -11,6 +11,10 @@
  *
  * Note: ChatGPT-specific detectors such as image spinners or the GPT Pro sidebar stop button
  * are intentionally left out. Provide them via hooks.isStreaming from your own script.
+ *
+ * Update log:
+ * - 2025-12-12: End-state fixes: stop->submit transition triggers "done"; avoid cross-chat false
+ *   finishes by tracking composer/context; guard streaming done even if hooks still true.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -107,13 +111,28 @@
         ensureSpinStyle(doc, styleId, faviconId);
 
         const state = { wasStreaming:false, justFinished:false, streamContext:null };
-        let composerRoot = queryAny(doc, selectors.composer);
+        let composerRoot = null;
+        let composerVersion = 0;
+        let composerKey = `composer-${composerVersion}`;
+        let stopWasVisible = false;
+        let stopEndedContext = false;
         let localObserver = null;
+        ctx.getComposerRoot = () => composerRoot;
 
         function setFavicon(key) {
             const icon = iconSet[key] ?? iconSet.wait;
             favicon.href = icon;
             key === 'rotate' ? favicon.classList.add('spin') : favicon.classList.remove('spin');
+        }
+
+        function refreshComposerRoot() {
+            const next = queryAny(doc, selectors.composer);
+            if (next === composerRoot) return;
+            composerRoot = next;
+            composerKey = `composer-${++composerVersion}`;
+            ctx.composerRoot = composerRoot;
+            stopWasVisible = false;
+            stopEndedContext = false;
         }
 
         function baseHasError() {
@@ -155,39 +174,52 @@
         }
 
         function evaluateState() {
-            const contextKey = typeof hooks.getContextKey === 'function' ? hooks.getContextKey(ctx) : null;
+            refreshComposerRoot();
+
+            const contextKey =
+                typeof hooks.getContextKey === 'function' ? hooks.getContextKey(ctx) : composerKey;
+
+            const stopVisible = !!queryAny(doc, selectors.stopBtn);
+            if (stopVisible) stopEndedContext = false;
+            const hookStreaming = typeof hooks.isStreaming === 'function' ? !!hooks.isStreaming(ctx) : false;
+            const stopTransitioned = stopWasVisible && !stopVisible;
+            if (stopTransitioned) stopEndedContext = true;
+
+            // If the stop button just flipped back to "submit", consider streaming finished,
+            // even if other hook-based detectors are still true.
+            const streaming = stopVisible || (hookStreaming && !stopEndedContext);
 
             if (hasError()) {
                 setFavicon('error');
                 state.wasStreaming = false;
                 state.justFinished = false;
                 state.streamContext = null;
+                stopWasVisible = stopVisible;
                 return;
             }
 
-            if (isStreaming()) {
+            if (streaming) {
                 state.wasStreaming = true;
                 state.justFinished = false;
                 state.streamContext = contextKey;
                 setFavicon('rotate');
+                stopWasVisible = stopVisible;
                 return;
             }
 
             if (state.wasStreaming) {
-                // Only enter "done" when the context is unchanged or unknown; otherwise reset flags.
-                const sameContext =
-                    !state.streamContext ||
-                    !contextKey ||
-                    state.streamContext === contextKey;
+                const sameContext = state.streamContext === contextKey;
                 state.wasStreaming = false;
-                if (sameContext) {
+                if (sameContext && (stopTransitioned || !hookStreaming)) {
                     state.justFinished = true;
                     setFavicon('done');
                 } else {
                     state.justFinished = false;
-                    state.streamContext = null;
+                    state.streamContext = sameContext ? state.streamContext : null;
                 }
             }
+
+            stopWasVisible = stopVisible;
 
             if (state.justFinished) {
                 if (!inputIsEmpty()) {
@@ -203,7 +235,7 @@
 
         function observeComposer() {
             if (localObserver) localObserver.disconnect();
-            composerRoot = queryAny(doc, selectors.composer);
+            refreshComposerRoot();
             if (!composerRoot) return;
 
             localObserver = new MutationObserver(evaluateState);
