@@ -13,12 +13,6 @@
  *   - removeCompetitors: remove other icon links (default: true)
  *   - insertFirst: insert managed link as first child of head (default: true)
  *   - trackAttributes: attributes to watch for icon changes (default: ['href','rel'])
- *
- * Update log:
- * - 2025-12-12: Watch for head icon removal/replacement and self-removal; restore managed favicon
- *   immediately to keep updates timely on SPA head rewrites.
- * - 2025-12-13: Track last managed href so head resets keep the current state (rotate/ready/done)
- *   instead of flashing back to the default icon.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -42,7 +36,6 @@
         const trackAttributes = opts.trackAttributes || ['href', 'rel'];
 
         let waitHref = opts.defaultHref || null;
-        let managedHref = waitHref;
         let observer = null;
 
         const isIconLink = (node) =>
@@ -66,7 +59,7 @@
             }
 
             let link = doc.getElementById(iconId);
-            const href = (link && link.href) || managedHref || waitHref;
+            const href = (link && link.href) || waitHref;
             if (!link || !head.contains(link)) {
                 link = doc.createElement('link');
                 link.id = iconId;
@@ -76,7 +69,6 @@
             link.type = type;
             if (sizes) link.setAttribute('sizes', sizes);
             if (href) link.href = href;
-            if (link.href) managedHref = link.href;
 
             if (insertFirst && head.firstChild !== link) head.insertBefore(link, head.firstChild);
             return link;
@@ -90,39 +82,20 @@
             observer = new MutationObserver((list) => {
                 let touched = false;
                 for (const m of list) {
-                    if (m.type === 'attributes' && isIconLink(m.target)) {
-                        if (m.target.id === iconId) {
-                            if (m.target.href) managedHref = m.target.href;
-                        } else {
-                            if (m.target.href) waitHref = m.target.href;
+                    if (m.type === 'attributes' && isIconLink(m.target) && m.target.id !== iconId) {
+                        if (m.target.href) waitHref = m.target.href;
+                        touched = true;
+                        break;
+                    }
+                    for (const node of m.addedNodes || []) {
+                        if (isIconLink(node) && node.id !== iconId) {
+                            if (node.href) waitHref = node.href;
                             touched = true;
                             break;
                         }
                     }
-                    if (m.type === 'childList') {
-                        for (const node of m.addedNodes || []) {
-                            if (isIconLink(node)) {
-                                if (node.id === iconId) {
-                                    if (node.href) managedHref = node.href;
-                                } else {
-                                    if (node.href) waitHref = node.href;
-                                    touched = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if (touched) break;
-                        for (const node of m.removedNodes || []) {
-                            if (isIconLink(node)) {
-                                if (node.id === iconId && node.href) managedHref = node.href;
-                                touched = true;
-                                break;
-                            }
-                        }
-                    }
                     if (touched) break;
                 }
-                if (!touched && !doc.getElementById(iconId)) touched = true;
                 if (touched) ensure();
             });
             observer.observe(target, {
