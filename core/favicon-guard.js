@@ -17,8 +17,8 @@
  * Update log:
  * - 2025-12-12: Watch for head icon removal/replacement and self-removal; restore managed favicon
  *   immediately to keep updates timely on SPA head rewrites.
- * - 2025-12-13: Preserve last known managed href when the icon link is removed/re-added so the
- *   current state (rotate/ready/done) survives SPA head resets without flashing fallback.
+ * - 2025-12-13: Remember the last managed href so SPA head resets keep the current state
+ *   (rotate/ready/done) instead of flashing back to the default icon.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -93,11 +93,11 @@
                     if (m.type === 'attributes' && isIconLink(m.target)) {
                         if (m.target.id === iconId) {
                             if (m.target.href) lastHref = m.target.href;
-                            continue;
+                        } else {
+                            if (m.target.href) waitHref = m.target.href;
+                            touched = true;
+                            break;
                         }
-                        if (m.target.href) waitHref = m.target.href;
-                        touched = true;
-                        break;
                     }
                     if (m.type === 'childList') {
                         for (const node of m.addedNodes || []) {
