@@ -1,11 +1,14 @@
 /*!
- * State Favicon Core [20251211] v1.0.0
+ * State Favicon Core [20251212] v1.0.1
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
  * Interfaces:
  *   - createStateFavicon({ selectors, icons, defaultIconHref, hooks, document, faviconId, styleId })
  *   - hooks: { isStreaming(ctx), hasError(ctx), isInputEmpty(ctx) }
+ *   - hooks.shouldEnterDone(ctx): optional gate for entering the "done" state when streaming ends
+ *       - called only when: wasStreaming === true AND isStreaming() === false AND context unchanged
+ *       - return true to show ✔️ done; return false to skip done and evaluate ready/wait immediately
  *   - selectors: override CSS selectors per target site (default values match ChatGPT UI)
  *   - icons: override data URLs for rotate/done/ready/error/wait (wait falls back to current favicon)
  *
@@ -52,10 +55,20 @@
         return Array.isArray(value) ? value.filter(Boolean) : [value];
     };
 
+    const isVisible = (el) => !!(
+        el &&
+        el.isConnected &&
+        el.getClientRects().length &&
+        getComputedStyle(el).visibility !== 'hidden' &&
+        getComputedStyle(el).display !== 'none'
+    );
+
     const queryAny = (doc, selector) => {
+        const list = [];
         for (const sel of toArray(selector)) {
-            const el = doc.querySelector(sel);
-            if (el) return el;
+            list.push(...doc.querySelectorAll(sel));
+            const found = list.find(isVisible) || list[0];
+            if (found) return found;
         }
         return null;
     };
@@ -181,8 +194,18 @@
                     state.streamContext === contextKey;
                 state.wasStreaming = false;
                 if (sameContext) {
-                    state.justFinished = true;
-                    setFavicon('done');
+                    const shouldEnterDone =
+                        typeof hooks.shouldEnterDone === 'function'
+                            ? !!hooks.shouldEnterDone(Object.assign({ state }, ctx))
+                            : true;
+                    if (shouldEnterDone) {
+                        state.justFinished = true;
+                        setFavicon('done');
+                        return;
+                    }
+                    // Skip "done" if the site indicates it hasn't fully returned to the idle submit state yet.
+                    state.justFinished = false;
+                    state.streamContext = null;
                 } else {
                     state.justFinished = false;
                     state.streamContext = null;
@@ -218,7 +241,8 @@
         }
 
         const globalObserver = new MutationObserver(() => {
-            if (composerRoot && !doc.contains(composerRoot)) observeComposer();
+            // Re-acquire composer when it appears later (SPA hydration) or gets replaced.
+            if (!composerRoot || !doc.contains(composerRoot)) observeComposer();
             evaluateState();
         });
 
