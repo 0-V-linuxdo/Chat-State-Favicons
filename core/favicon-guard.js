@@ -13,6 +13,10 @@
  *   - removeCompetitors: remove other icon links (default: true)
  *   - insertFirst: insert managed link as first child of head (default: true)
  *   - trackAttributes: attributes to watch for icon changes (default: ['href','rel'])
+ *
+ * Update log:
+ * - 2025-12-12: Watch for head icon removal/replacement and self-removal; restore managed favicon
+ *   immediately to keep updates timely on SPA head rewrites.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) {
@@ -87,15 +91,25 @@
                         touched = true;
                         break;
                     }
-                    for (const node of m.addedNodes || []) {
-                        if (isIconLink(node) && node.id !== iconId) {
-                            if (node.href) waitHref = node.href;
-                            touched = true;
-                            break;
+                    if (m.type === 'childList') {
+                        for (const node of m.addedNodes || []) {
+                            if (isIconLink(node) && node.id !== iconId) {
+                                if (node.href) waitHref = node.href;
+                                touched = true;
+                                break;
+                            }
+                        }
+                        if (touched) break;
+                        for (const node of m.removedNodes || []) {
+                            if ((node.id === iconId) || isIconLink(node)) {
+                                touched = true;
+                                break;
+                            }
                         }
                     }
                     if (touched) break;
                 }
+                if (!touched && !doc.getElementById(iconId)) touched = true;
                 if (touched) ensure();
             });
             observer.observe(target, {
