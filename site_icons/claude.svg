@@ -3,7 +3,7 @@
     /* 定义颜色变量，你可以修改这里改变颜色 */
     :root {
       --claude-brand-color: #D97757; 
-      --animation-speed: 5s;
+      --animation-speed: 2.5s;
     }
 
     .sprite-animation {
@@ -15,7 +15,7 @@
           iteration: infinite (无限循环)
       */
       fill: var(--claude-brand-color);
-      animation: slide 1s steps(15) infinite;
+      animation: slide var(--animation-speed) steps(15) infinite;
     }
 
     @keyframes slide {
