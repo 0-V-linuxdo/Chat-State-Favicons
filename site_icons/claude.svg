@@ -3,7 +3,7 @@
     /* 定义颜色变量，你可以修改这里改变颜色 */
     :root {
       --claude-brand-color: #D97757; 
-      --animation-speed: 2.5s;
+      --animation-speed: 2s;
     }
 
     .sprite-animation {
