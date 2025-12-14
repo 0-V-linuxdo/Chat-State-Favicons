@@ -4,12 +4,13 @@
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
  * Interfaces:
- *   - createStateFavicon({ selectors, icons, defaultIconHref, hooks, document, faviconId, styleId })
+ *   - createStateFavicon({ selectors, icons, defaultIconHref, hooks, document, faviconId, styleId, submitEndsStreaming })
  *   - hooks: { isStreaming(ctx), hasError(ctx), isInputEmpty(ctx) }
  *   - hooks.shouldEnterDone(ctx): optional gate for entering the "done" state when streaming ends
  *       - called only when: wasStreaming === true AND isStreaming() === false AND context unchanged
  *       - return true to show ✔️ done; return false to skip done and evaluate ready/wait immediately
  *   - selectors: override CSS selectors per target site (default values match ChatGPT UI)
+ *   - submitEndsStreaming: when true, the core will only enter "done" if a submit button (selectors.submitBtn) is visible
  *   - icons: override data URLs for rotate/done/ready/error/wait (wait falls back to current favicon)
  *
  * Note: ChatGPT-specific detectors such as image spinners or the GPT Pro sidebar stop button
@@ -31,6 +32,7 @@
         composer : 'form[data-type="unified-composer"], form.w-full[data-type]',
         textarea : '#prompt-textarea',
         stopBtn  : 'button[data-testid="stop-button"]',
+        submitBtn: null, // optional: when submitEndsStreaming is true, this gates entering "done"
         toastErr : '[data-testid="toast-error"]',
         errBtn   : 'button[data-testid="regenerate-thread-error-button"]',
         favicon  : 'link[rel~="icon"]'
@@ -108,6 +110,7 @@
         const iconSet = Object.assign({}, DEFAULT_ICONS, options.icons || {});
         const hooks = options.hooks || {};
         const ctx = { doc, selectors };
+        const submitEndsStreaming = options.submitEndsStreaming === true;
 
         const originalHref = options.defaultIconHref || getOriginalFaviconHref(doc, selectors);
         if (!iconSet.wait) iconSet.wait = originalHref;
@@ -255,6 +258,11 @@
             return text.replace(/\u200B/g, '').trim().length === 0;
         }
 
+        function submitIsVisible() {
+            if (!selectors.submitBtn) return false;
+            return !!queryAny(doc, selectors.submitBtn);
+        }
+
         function inputIsEmpty() {
             if (typeof hooks.isInputEmpty === 'function') return !!hooks.isInputEmpty(ctx);
             return baseInputIsEmpty();
@@ -287,10 +295,11 @@
                     state.streamContext === contextKey;
                 state.wasStreaming = false;
                 if (sameContext) {
+                    const submitGate = submitEndsStreaming ? submitIsVisible() : true;
                     const shouldEnterDone =
                         typeof hooks.shouldEnterDone === 'function'
                             ? !!hooks.shouldEnterDone(Object.assign({ state }, ctx))
-                            : true;
+                            : submitGate;
                     if (shouldEnterDone) {
                         state.justFinished = true;
                         setFavicon('done');
@@ -393,12 +402,92 @@
         };
     }
 
+    const globalScope =
+        typeof self !== 'undefined'
+            ? self
+            : (typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : null));
+
+    /**
+     * Streaming context lock helper:
+     *   - while streaming: lock the first seen signature, allow empty→non-empty token fill once
+     *   - when not streaming: clear lock and use current token/signature
+     */
+    function createContextLock(opts = {}) {
+        const getToken = typeof opts.getToken === 'function' ? opts.getToken : () => '';
+        const getSignature = typeof opts.getSignature === 'function' ? opts.getSignature : () => '';
+        const isStreaming = typeof opts.isStreaming === 'function' ? opts.isStreaming : () => false;
+        const buildKey = typeof opts.buildKey === 'function'
+            ? opts.buildKey
+            : (token, sig) => (token ? token : `draft|${sig || 'no-sig'}`);
+
+        let activeToken = '';
+        let activeSig = '';
+
+        function getContextKey() {
+            const token = getToken();
+            const sig = getSignature();
+
+            if (isStreaming()) {
+                if (!activeSig) activeSig = sig;
+                if (!activeToken && token && sig === activeSig) activeToken = token;
+                return buildKey(activeToken, activeSig);
+            }
+
+            activeToken = '';
+            activeSig = '';
+            return buildKey(token, sig);
+        }
+
+        function reset() {
+            activeToken = '';
+            activeSig = '';
+        }
+
+        return { getContextKey, reset };
+    }
+
+    /**
+     * Start favicon guard if available (no-op when FaviconGuard is absent).
+     * Returns the guard instance or null.
+     */
+    function startFaviconGuard(opts = {}) {
+        const guardFactory =
+            typeof opts.guardFactory === 'function'
+                ? opts.guardFactory
+                : (globalScope && globalScope.FaviconGuard && globalScope.FaviconGuard.createFaviconGuard);
+        if (typeof guardFactory !== 'function') return null;
+
+        try {
+            const guard = guardFactory({
+                defaultHref: opts.defaultHref,
+                iconId: opts.iconId || 'state-favicon',
+                rel: opts.rel,
+                type: opts.type,
+                sizes: opts.sizes,
+                removeCompetitors: opts.removeCompetitors !== false,
+                insertFirst: opts.insertFirst !== false,
+                trackAttributes: opts.trackAttributes || ['href', 'rel']
+            });
+            guard.start();
+            return guard;
+        } catch (err) {
+            try { console.warn('[StateFaviconCore] FaviconGuard start failed:', err); } catch (_) { /* silent */ }
+            return null;
+        }
+    }
+
     return {
         createStateFavicon,
         svgEmoji,
         DEFAULT_ICONS,
         DEFAULT_SELECTORS,
         // Shared helpers for site scripts (avoid duplicating visibility checks)
-        utils: { isVisible, queryAny, toArray }
+        utils: {
+            isVisible,
+            queryAny,
+            toArray,
+            createContextLock,
+            startFaviconGuard
+        }
     };
 });
