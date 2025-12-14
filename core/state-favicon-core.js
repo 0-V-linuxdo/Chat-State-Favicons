@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251216] v1.0.2
+ * State Favicon Core [20251212] v1.0.1
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -153,7 +153,6 @@
         let scheduled = false;
         let scheduledId = null;
         let scheduledViaRaf = false;
-        let scheduleToken = 0;
 
         const applied = { href: null, spinning: null };
 
@@ -179,47 +178,32 @@
         }
 
         function scheduleEvaluate() {
-            if (!started || scheduled) return;
+            if (!started) return;
+            if (scheduled) return;
             scheduled = true;
-            const token = ++scheduleToken;
-            scheduledViaRaf = false;
-            scheduledId = null;
 
-            // Use a microtask to avoid background-tab timer clamping (setTimeout/rAF can stall to 1s+).
             const runner = () => {
-                if (!started || token !== scheduleToken) return;
                 scheduled = false;
                 scheduledId = null;
+                if (!started) return;
                 if (!composerRoot || !doc.contains(composerRoot)) observeComposer();
                 evaluateState();
             };
 
-            if (typeof queueMicrotask === 'function') {
-                queueMicrotask(runner);
-                return;
-            }
-            if (typeof Promise === 'function') {
-                Promise.resolve().then(runner);
-                return;
-            }
-
-            // Last resort fallback (older envs): keep the old raf/setTimeout path.
             if (raf) {
                 scheduledViaRaf = true;
                 scheduledId = raf(runner);
             } else {
+                scheduledViaRaf = false;
                 scheduledId = setTimeout(runner, 0);
             }
         }
 
         function cancelScheduledEvaluate() {
-            scheduleToken++;
-            if (scheduledId) {
-                if (scheduledViaRaf && caf) caf(scheduledId);
-                if (!scheduledViaRaf) clearTimeout(scheduledId);
-            }
+            if (!scheduledId) return;
+            if (scheduledViaRaf && caf) caf(scheduledId);
+            if (!scheduledViaRaf) clearTimeout(scheduledId);
             scheduledId = null;
-            scheduledViaRaf = false;
             scheduled = false;
         }
 
