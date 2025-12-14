@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251212] v1.0.1
+ * State Favicon Core [20251214] v1.0.1
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -397,6 +397,8 @@
         createStateFavicon,
         svgEmoji,
         DEFAULT_ICONS,
-        DEFAULT_SELECTORS
+        DEFAULT_SELECTORS,
+        // Shared helpers for site scripts (avoid duplicating visibility checks)
+        utils: { isVisible, queryAny, toArray }
     };
 });
