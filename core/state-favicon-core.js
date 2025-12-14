@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251212] v1.0.1
+ * State Favicon Core [20251216] v1.0.2
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -55,13 +55,12 @@
         return Array.isArray(value) ? value.filter(Boolean) : [value];
     };
 
-    const isVisible = (el) => !!(
-        el &&
-        el.isConnected &&
-        el.getClientRects().length &&
-        getComputedStyle(el).visibility !== 'hidden' &&
-        getComputedStyle(el).display !== 'none'
-    );
+    const isVisible = (el) => {
+        if (!el || !el.isConnected) return false;
+        if (!el.getClientRects().length) return false;
+        const style = getComputedStyle(el);
+        return style.visibility !== 'hidden' && style.display !== 'none';
+    };
 
     const queryAny = (doc, selector) => {
         const list = [];
@@ -116,32 +115,142 @@
         const faviconId = options.faviconId || 'state-favicon';
         const styleId = options.styleId || 'state-favicon-style';
 
-        const favicon = ensureFaviconLink(doc, faviconId, iconSet.wait);
+        let favicon = ensureFaviconLink(doc, faviconId, iconSet.wait);
         ensureSpinStyle(doc, styleId, faviconId);
 
         const state = { wasStreaming:false, justFinished:false, streamContext:null };
         let composerRoot = queryAny(doc, selectors.composer);
         let localObserver = null;
+        let started = false;
+
+        const view = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+        const raf = view && typeof view.requestAnimationFrame === 'function'
+            ? view.requestAnimationFrame.bind(view)
+            : null;
+        const caf = view && typeof view.cancelAnimationFrame === 'function'
+            ? view.cancelAnimationFrame.bind(view)
+            : null;
+
+        const nowMs = () =>
+            (typeof performance !== 'undefined' && typeof performance.now === 'function')
+                ? performance.now()
+                : Date.now();
+
+        const genericErrorScanIntervalMs =
+            Number.isFinite(options.genericErrorScanIntervalMs)
+                ? Math.max(0, options.genericErrorScanIntervalMs)
+                : 800;
+        const genericErrorRegex =
+            options.genericErrorRegex instanceof RegExp
+                ? options.genericErrorRegex
+                : /(Regenerate|Retry|Error)/i;
+        const genericErrorTest = (text) => {
+            if (genericErrorRegex.global) genericErrorRegex.lastIndex = 0;
+            return genericErrorRegex.test(text);
+        };
+        const genericErrorCache = { at: 0, value: false };
+
+        let scheduled = false;
+        let scheduledId = null;
+        let scheduledViaRaf = false;
+        let scheduleToken = 0;
+
+        const applied = { href: null, spinning: null };
 
         function setFavicon(key) {
             const icon = iconSet[key] ?? iconSet.wait;
-            favicon.href = icon;
-            key === 'rotate' ? favicon.classList.add('spin') : favicon.classList.remove('spin');
+            const spinning = key === 'rotate';
+
+            if (!favicon || !favicon.isConnected) {
+                favicon = ensureFaviconLink(doc, faviconId, iconSet.wait);
+                ensureSpinStyle(doc, styleId, faviconId);
+                applied.href = null;
+                applied.spinning = null;
+            }
+
+            if (applied.href !== icon) {
+                favicon.href = icon;
+                applied.href = icon;
+            }
+            if (applied.spinning !== spinning) {
+                favicon.classList.toggle('spin', spinning);
+                applied.spinning = spinning;
+            }
+        }
+
+        function scheduleEvaluate() {
+            if (!started || scheduled) return;
+            scheduled = true;
+            const token = ++scheduleToken;
+            scheduledViaRaf = false;
+            scheduledId = null;
+
+            // Use a microtask to avoid background-tab timer clamping (setTimeout/rAF can stall to 1s+).
+            const runner = () => {
+                if (!started || token !== scheduleToken) return;
+                scheduled = false;
+                scheduledId = null;
+                if (!composerRoot || !doc.contains(composerRoot)) observeComposer();
+                evaluateState();
+            };
+
+            if (typeof queueMicrotask === 'function') {
+                queueMicrotask(runner);
+                return;
+            }
+            if (typeof Promise === 'function') {
+                Promise.resolve().then(runner);
+                return;
+            }
+
+            // Last resort fallback (older envs): keep the old raf/setTimeout path.
+            if (raf) {
+                scheduledViaRaf = true;
+                scheduledId = raf(runner);
+            } else {
+                scheduledId = setTimeout(runner, 0);
+            }
+        }
+
+        function cancelScheduledEvaluate() {
+            scheduleToken++;
+            if (scheduledId) {
+                if (scheduledViaRaf && caf) caf(scheduledId);
+                if (!scheduledViaRaf) clearTimeout(scheduledId);
+            }
+            scheduledId = null;
+            scheduledViaRaf = false;
+            scheduled = false;
         }
 
         function baseHasError() {
             if (queryAny(doc, selectors.toastErr)) return true;
             if (queryAny(doc, selectors.errBtn)) return true;
-            // Generic retry / error buttons
-            return Array.from(doc.querySelectorAll('button')).some(b =>
-                /(Regenerate|Retry|Error)/i.test(b.textContent || '')
-            );
+
+            // Generic retry / error buttons (throttled; prefer hooks.hasError for best performance).
+            if (genericErrorScanIntervalMs === 0) return false;
+            const t = nowMs();
+            if (t - genericErrorCache.at < genericErrorScanIntervalMs) return genericErrorCache.value;
+            genericErrorCache.at = t;
+
+            let found = false;
+            try {
+                const buttons = doc.querySelectorAll('button');
+                for (let i = 0; i < buttons.length; i++) {
+                    const text = buttons[i].textContent || '';
+                    if (genericErrorTest(text)) { found = true; break; }
+                }
+            } catch {
+                found = false;
+            }
+            genericErrorCache.value = found;
+            return found;
         }
 
         function hasError() {
-            if (baseHasError()) return true;
+            // If site provides a custom hasError hook, use it exclusively (allows full override)
             if (typeof hooks.hasError === 'function') return !!hooks.hasError(ctx);
-            return false;
+            return baseHasError();
         }
 
         function baseIsStreaming() {
@@ -213,11 +322,23 @@
             }
 
             if (state.justFinished) {
+                // If the user navigated away after finishing (SPA thread switch),
+                // do not keep showing "done" for an unrelated context.
+                const contextChanged =
+                    state.streamContext &&
+                    contextKey &&
+                    state.streamContext !== contextKey;
+                if (contextChanged) {
+                    state.justFinished = false;
+                    state.streamContext = null;
+                    // fallthrough to evaluate ready/wait for the current page
+                } else {
                 if (!inputIsEmpty()) {
                     setFavicon('ready');
                     state.justFinished = false;
                 }
                 return;
+                }
             }
 
             state.streamContext = null;
@@ -229,7 +350,7 @@
             composerRoot = queryAny(doc, selectors.composer);
             if (!composerRoot) return;
 
-            localObserver = new MutationObserver(evaluateState);
+            localObserver = new MutationObserver(scheduleEvaluate);
             localObserver.observe(composerRoot, {
                 childList:true,
                 subtree:true,
@@ -237,28 +358,32 @@
                 attributes:true,
                 attributeFilter:['aria-disabled','disabled','data-testid','class']
             });
-            evaluateState();
         }
 
-        const globalObserver = new MutationObserver(() => {
-            // Re-acquire composer when it appears later (SPA hydration) or gets replaced.
-            if (!composerRoot || !doc.contains(composerRoot)) observeComposer();
-            evaluateState();
-        });
+        const globalObserver = new MutationObserver(scheduleEvaluate);
 
         function start() {
-            if (doc.body) globalObserver.observe(doc.body, { childList:true, subtree:true });
+            if (started) return;
+            started = true;
+            const root = doc.body || doc.documentElement;
+            if (root) globalObserver.observe(root, { childList:true, subtree:true });
             observeComposer();
+            evaluateState();
         }
 
         function stop() {
+            started = false;
+            cancelScheduledEvaluate();
             globalObserver.disconnect();
             if (localObserver) localObserver.disconnect();
+            localObserver = null;
+            composerRoot = null;
         }
 
         function updateSelectors(nextSelectors) {
             Object.assign(selectors, nextSelectors || {});
             observeComposer();
+            evaluateState();
         }
 
         function updateDefaultIcon(href) {
