@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251215] v1.0.2
+ * State Favicon Core [20251215] v1.0.3
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -10,6 +10,8 @@
  *       - called only when: wasStreaming === true AND isStreaming() === false AND context unchanged
  *       - return true to show ✔️ done; return false to skip done and evaluate ready/wait immediately
  *   - selectors: override CSS selectors per target site (default values match ChatGPT UI)
+ *   - stopSearchScope: limit stop-button lookup (e.g., 'composer', a DOM root, or a function returning roots)
+ *   - stopMustBeVisible: when true, ignore hidden stop buttons (no fallback to the first hidden match)
  *   - submitEndsStreaming: when true, the core will only enter "done" if a submit button (selectors.submitBtn) is visible
  *   - icons: override data URLs for rotate/done/ready/error/wait (wait falls back to current favicon)
  *
@@ -64,12 +66,21 @@
         return style.visibility !== 'hidden' && style.display !== 'none';
     };
 
-    const queryAny = (doc, selector) => {
+    const queryAny = (doc, selector, opts = {}) => {
         const list = [];
+        const requireVisible = !!opts.visibleOnly;
         for (const sel of toArray(selector)) {
-            list.push(...doc.querySelectorAll(sel));
-            const found = list.find(isVisible) || list[0];
-            if (found) return found;
+            try {
+                list.push(...doc.querySelectorAll(sel));
+            } catch {
+                /* ignore selector errors */
+            }
+            const visible = list.find(isVisible);
+            if (visible) return visible;
+            if (!requireVisible) {
+                const first = list[0];
+                if (first) return first;
+            }
         }
         return null;
     };
@@ -152,12 +163,39 @@
             return genericErrorRegex.test(text);
         };
         const genericErrorCache = { at: 0, value: false };
+        const stopSearchScope = options.stopSearchScope;
+        const stopMustBeVisible = options.stopMustBeVisible === true;
 
         let scheduled = false;
         let scheduledId = null;
         let scheduledViaRaf = false;
 
         const applied = { href: null, spinning: null };
+
+        const normalizeScopeList = (value) => {
+            if (!value) return [];
+            const arr = Array.isArray(value) ? value : [value];
+            return arr.filter((node) => node && typeof node.querySelectorAll === 'function');
+        };
+
+        function getStopScopes() {
+            if (stopSearchScope === 'composer') {
+                return normalizeScopeList(composerRoot);
+            }
+            if (typeof stopSearchScope === 'function') {
+                try {
+                    const res = stopSearchScope(Object.assign({ composerRoot }, ctx));
+                    const list = normalizeScopeList(res);
+                    if (list.length) return list;
+                } catch {
+                    /* ignore */
+                }
+            } else {
+                const list = normalizeScopeList(stopSearchScope);
+                if (list.length) return list;
+            }
+            return [doc];
+        }
 
         function setFavicon(key) {
             const icon = iconSet[key] ?? iconSet.wait;
@@ -240,9 +278,17 @@
             return baseHasError();
         }
 
+        function queryStopButton() {
+            const scopes = getStopScopes();
+            for (const scope of scopes) {
+                const stop = queryAny(scope, selectors.stopBtn, { visibleOnly: stopMustBeVisible });
+                if (stop) return stop;
+            }
+            return null;
+        }
+
         function baseIsStreaming() {
-            if (queryAny(doc, selectors.stopBtn)) return true;
-            return false;
+            return !!queryStopButton();
         }
 
         function isStreaming() {
