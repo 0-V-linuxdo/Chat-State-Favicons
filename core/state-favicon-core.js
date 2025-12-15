@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251214] v1.0.1
+ * State Favicon Core [20251215] v1.0.2
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -459,6 +459,7 @@
 
         try {
             const guard = guardFactory({
+                document: opts.document,
                 defaultHref: opts.defaultHref,
                 iconId: opts.iconId || 'state-favicon',
                 rel: opts.rel,
@@ -476,6 +477,43 @@
         }
     }
 
+    /**
+     * Initialize default favicon with optional guard.
+     * Returns { defaultIconHref, guard }.
+     */
+    function initDefaultFavicon(opts = {}) {
+        const doc = opts.document || (typeof document !== 'undefined' ? document : null);
+        const selectors = opts.selectors || {};
+        const pickDefaultHref = () =>
+            opts.defaultIconHref ||
+            (doc ? getOriginalFaviconHref(doc, selectors) : null) ||
+            DEFAULT_FALLBACK_ICON;
+
+        const defaultHref = pickDefaultHref();
+        const guard =
+            opts.useGuard === false
+                ? null
+                : startFaviconGuard({
+                    guardFactory: opts.guardFactory,
+                    document: doc,
+                    defaultHref,
+                    iconId: opts.faviconId || opts.iconId,
+                    rel: opts.rel,
+                    type: opts.type,
+                    sizes: opts.sizes,
+                    removeCompetitors: opts.removeCompetitors,
+                    insertFirst: opts.insertFirst,
+                    trackAttributes: opts.trackAttributes
+                });
+
+        return {
+            defaultIconHref: (guard && typeof guard.getDefaultHref === 'function')
+                ? guard.getDefaultHref() || defaultHref
+                : defaultHref,
+            guard
+        };
+    }
+
     return {
         createStateFavicon,
         svgEmoji,
@@ -487,7 +525,8 @@
             queryAny,
             toArray,
             createContextLock,
-            startFaviconGuard
+            startFaviconGuard,
+            initDefaultFavicon
         }
     };
 });
