@@ -1,40 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
   <title>Mistral Streaming Status</title>
   <style>
-    /* 动画定义：流式生成 (Streaming) */
-    .stream-layer {
-      opacity: 0;
-      animation: streamIn 1.5s infinite;
-    }
-    
-    /* 逐层延迟，模拟 Token 生成 */
-    .stream-layer:nth-child(1) { animation-delay: 0.1s; }
-    .stream-layer:nth-child(2) { animation-delay: 0.3s; }
-    .stream-layer:nth-child(3) { animation-delay: 0.5s; }
-    .stream-layer:nth-child(4) { animation-delay: 0.7s; }
-    .stream-layer:nth-child(5) { animation-delay: 0.9s; }
-
+    /* 定义流式生成的关键帧：下落 + 透明度渐变 */
     @keyframes streamIn {
       0% { opacity: 0.1; transform: translateY(-2px); }
       30% { opacity: 1; transform: translateY(0); }
       80% { opacity: 1; }
       100% { opacity: 0.1; }
     }
+
+    /* 应用动画基础设置 */
+    .stream-layer {
+      opacity: 0; /* 初始隐藏 */
+      animation: streamIn 1.5s infinite ease-out;
+    }
+
+    /* 使用 nth-of-type 确保只针对 path 元素设置延迟，避免被 style 或 rect 干扰 */
+    /* 从上到下依次延迟，模拟生成过程 */
+    path.stream-layer:nth-of-type(1) { animation-delay: 0.1s; } /* 顶部金色层 */
+    path.stream-layer:nth-of-type(2) { animation-delay: 0.3s; }
+    path.stream-layer:nth-of-type(3) { animation-delay: 0.5s; }
+    path.stream-layer:nth-of-type(4) { animation-delay: 0.7s; }
+    path.stream-layer:nth-of-type(5) { animation-delay: 0.9s; } /* 底部红色层 */
   </style>
 
-  <!-- 顶部第一层 -->
-  <path class="stream-layer" d="M3.428 3.4h3.429v3.428H3.428V3.4zm13.714 0h3.43v3.428h-3.43V3.4z" fill="gold"/>
-  
-  <!-- 第二层 -->
-  <path class="stream-layer" d="M3.428 6.828h6.857v3.429H3.429V6.828zm10.286 0h6.857v3.429h-6.857V6.828z" fill="#FFAF00"/>
-  
-  <!-- 第三层 -->
-  <path class="stream-layer" d="M3.428 10.258h17.144v3.428H3.428v-3.428z" fill="#FF8205"/>
-  
-  <!-- 第四层 -->
-  <path class="stream-layer" d="M3.428 13.686h3.429v3.428H3.428v-3.428zm6.858 0h3.429v3.428h-3.429v-3.428zm6.856 0h3.43v3.428h-3.43v-3.428z" fill="#FA500F"/>
-  
-  <!-- 底部第五层 -->
-  <path class="stream-layer" d="M0 17.114h10.286v3.429H0v-3.429zm13.714 0H24v3.429H13.714v-3.429z" fill="#E10500"/>
+  <!-- 背景区域 (透明占位，确保 24x24 尺寸) -->
+  <rect width="24" height="24" fill="none"/>
 
+  <!-- 图标路径，分为5层 -->
+  <path class="stream-layer" d="M3.428 3.4h3.429v3.428H3.428V3.4zm13.714 0h3.43v3.428h-3.43V3.4z" fill="gold"></path>
+  <path class="stream-layer" d="M3.428 6.828h6.857v3.429H3.429V6.828zm10.286 0h6.857v3.429h-6.857V6.828z" fill="#FFAF00"></path>
+  <path class="stream-layer" d="M3.428 10.258h17.144v3.428H3.428v-3.428z" fill="#FF8205"></path>
+  <path class="stream-layer" d="M3.428 13.686h3.429v3.428H3.428v-3.428zm6.858 0h3.429v3.428h-3.429v-3.428zm6.856 0h3.43v3.428h-3.43v-3.428z" fill="#FA500F"></path>
+  <path class="stream-layer" d="M0 17.114h10.286v3.429H0v-3.429zm13.714 0H24v3.429H13.714v-3.429z" fill="#E10500"></path>
 </svg>
