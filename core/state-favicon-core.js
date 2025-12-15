@@ -1,5 +1,5 @@
 /*!
- * State Favicon Core [20251215] v1.0.3
+ * State Favicon Core [20251215] v1.0.4
  * Extracted from "[Chat] State Favicons" and made configurable.
  * Provides a small state machine to swap favicons based on streaming / ready / error states.
  *
@@ -572,7 +572,34 @@
             toArray,
             createContextLock,
             startFaviconGuard,
-            initDefaultFavicon
+            initDefaultFavicon,
+            // Lazily attach a stable signature to a DOM root to identify the active composer.
+            lazySignature: function lazySignature(prefix, root) {
+                const node = root || (typeof document !== 'undefined' ? document.body : null);
+                if (!node) return `${prefix || 'sig'}-no-root`;
+                const key = prefix ? `__sfv_${prefix}_sig` : '__sfv_sig';
+                if (!node[key]) {
+                    node[key] = `${prefix || 'sig'}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+                }
+                return node[key];
+            },
+            // Build a context key from URL parts + optional token/signature.
+            buildContextKeyFromUrl: function buildContextKeyFromUrl(opts = {}) {
+                const loc = opts.location || (typeof location !== 'undefined' ? location : null);
+                if (!loc) return (opts.token || '') || `draft|${(typeof opts.draftSig === 'function' ? opts.draftSig() : opts.draftSig) || 'no-sig'}`;
+
+                const base =
+                    loc.origin +
+                    loc.pathname +
+                    (opts.includeSearch === false ? '' : (loc.search || '')) +
+                    (opts.includeHash ? (loc.hash || '') : '');
+
+                const token = opts.token || '';
+                if (token) return `${base}|${token}`;
+
+                const sig = typeof opts.draftSig === 'function' ? opts.draftSig() : opts.draftSig;
+                return `${base}|draft|${sig || 'no-sig'}`;
+            }
         }
     };
 });
