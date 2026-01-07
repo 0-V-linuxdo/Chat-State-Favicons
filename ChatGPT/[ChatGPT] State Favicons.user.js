@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [ChatGPT] State Favicons [20251215] v1.0.6
+// @name         [ChatGPT] State Favicons [20260106] v1.0.7
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
 // @description  Dynamic favicon (modular): 🔄 streaming · ✔️ done · 👍 ready · 🚫 error · default waiting. ChatGPT-specific detectors live here; core logic is in state-favicon-core.js for reuse on other AI sites.
-// @version      [20251215] v1.0.6
-// @update-log   使用 core 新增 lazySignature/buildContextKeyFromUrl，复用通用上下文/签名 helper；版本提升至 v1.0.6。
+// @version      [20260106] v1.0.7
+// @update-log   修复 Chrome 下 favicon 不生效：启用 FaviconGuard 移除竞争 rel~="icon" 链接，确保标签页实际使用 state-favicon。
 //
 // Offical ChatGPT domains
 // @match        https://chatgpt.com/*
@@ -15,9 +15,9 @@
 // @match        https://chatgpt.aicnm.cc/*
 //
 // @grant        none
-// @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/state-favicon-core.js?v=20251215.0.0.6
+// @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/state-favicon-core.js?v=20260106.0.0.7
 // @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/favicon-guard.js
-// @icon         https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/ChatGPT/icon/ChatGPT.svg?v=20251215.0.0.6
+// @icon         https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/ChatGPT/icon/ChatGPT.svg?v=20260106.0.0.7
 // ==/UserScript==
 
 (() => {
@@ -45,7 +45,7 @@
     const { defaultIconHref } = initDefaultFavicon({
         document,
         selectors: { favicon: SELECTORS.favicon },
-        removeCompetitors: false,
+        removeCompetitors: true,
         insertFirst: true,
         trackAttributes: ['href', 'rel']
     });
