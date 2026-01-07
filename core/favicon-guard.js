@@ -10,7 +10,7 @@
  *   - type:     type attribute (default: 'image/svg+xml')
  *   - sizes:    sizes attribute (default: 'any')
  *   - defaultHref: initial fallback href
- *   - removeCompetitors: remove other icon links (default: true)
+ *   - removeCompetitors: remove other rel~="icon" links (default: true)
  *   - insertFirst: insert managed link as first child of head (default: true)
  *   - trackAttributes: attributes to watch for icon changes (default: ['href','rel'])
  */
@@ -38,24 +38,24 @@
         let waitHref = opts.defaultHref || null;
         let observer = null;
 
-        const isIconLink = (node) =>
-            node && node.tagName === 'LINK' && /\bicon\b/i.test(node.getAttribute('rel') || '');
+        const isIconLink = (node) => {
+            if (!node || node.tagName !== 'LINK') return false;
+            const relList = node.relList;
+            if (relList && typeof relList.contains === 'function') return relList.contains('icon');
+            const rel = (node.getAttribute('rel') || '').toLowerCase();
+            return rel.split(/\s+/).includes('icon');
+        };
 
         function ensure() {
             const head = doc.head || doc.documentElement;
             if (!head) return null;
 
-            if (removeCompetitors) {
-                const competitors = Array.from(head.querySelectorAll(`link[rel*="icon"]:not(#${iconId})`));
-                for (const c of competitors) {
-                    if (!waitHref && c.href) waitHref = c.href;
-                    c.remove();
-                }
-            } else {
-                const competitors = Array.from(head.querySelectorAll(`link[rel*="icon"]:not(#${iconId})`));
-                for (const c of competitors) {
-                    if (!waitHref && c.href) waitHref = c.href;
-                }
+            const competitors = Array.from(head.querySelectorAll('link')).filter(
+                (link) => link.id !== iconId && isIconLink(link)
+            );
+            for (const c of competitors) {
+                if (!waitHref && c.href) waitHref = c.href;
+                if (removeCompetitors) c.remove();
             }
 
             let link = doc.getElementById(iconId);
