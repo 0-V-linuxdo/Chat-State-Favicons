@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20260819] v1.1.4
+// @name         [Grok] State Favicons [20260819] v1.1.5
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
 // @description  Grok favicon states. Menu: 1 original · 2 badge · 3 dot · 4 hole · 5 background.
-// @version      [20260819] v1.1.4
-// @update-log   油猴菜单改为 1–5 序号，去掉「样式：」前缀。
+// @version      [20260819] v1.1.5
+// @update-log   「原图标」改回 core 默认的系统 emoji SVG（🔄✔️👍🚫），与最初整颗替换一致。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
@@ -55,12 +55,18 @@
         ? defaultIconHref
         : `${location.origin}/images/favicon.svg`;
 
+    function svgEmoji(e) {
+        return `data:image/svg+xml,${encodeURIComponent(
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">${e}</text></svg>`
+        )}`;
+    }
+
     const ORIGINAL_ICONS = {
         wait:   officialHref,
-        rotate: 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f504.png',
-        done:   'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/2714.png',
-        ready:  'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f44d.png',
-        error:  'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f6ab.png'
+        rotate: svgEmoji('🔄'),
+        done:   svgEmoji('✔️'),
+        ready:  svgEmoji('👍'),
+        error:  svgEmoji('🚫')
     };
 
     const STORE_KEY = 'sfv-grok-style';
