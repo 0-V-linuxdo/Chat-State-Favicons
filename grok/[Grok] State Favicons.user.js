@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20260819] v1.0.7
+// @name         [Grok] State Favicons [20260819] v1.0.8
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
-// @description  Keep the Grok favicon and overlay a corner status badge: 🔄 streaming · ✔️ done · 👍 ready · 🚫 error · idle = original icon.
-// @version      [20260819] v1.0.7
-// @update-log   不再整颗替换 favicon，改为在原站点图标右下角叠加状态徽标（仅 Grok 脚本）。
+// @description  Keep a vector Grok mark and overlay a small SVG corner badge: streaming / done / ready / error. Idle = original mark, no badge.
+// @version      [20260819] v1.0.8
+// @update-log   方案 A：纯 SVG 重绘 Grok 标 + 右下角小角标（对勾/叉/弧/上箭头），不再栅格化替换整颗 favicon。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
@@ -26,10 +26,7 @@
 
     /* ----------  selectors tailored for Grok  ---------- */
     const SELECTORS = {
-        // The contenteditable input area (TipTap/ProseMirror)
         textarea : '.tiptap.ProseMirror[contenteditable="true"]',
-        // NOTE: core 默认不会观察 aria-label 属性变化，因此我们会用自定义 observer 触发 evaluateState
-        // Stop button during streaming (label may vary; hook will do additional detection)
         stopBtn  : [
             'button[aria-label="Stop model response"]',
             'button[aria-label*="Stop"]',
@@ -41,34 +38,97 @@
             'button[type="submit"]',
             'button:not([aria-label*="Stop" i])'
         ],
-        // Prefer the official SVG mark so the overlay sits on a crisp base.
         favicon  : 'link[rel="icon"][type="image/svg+xml"], link[rel~="icon"]'
     };
 
-    const { defaultIconHref, guard } = initDefaultFavicon({
+    const { guard } = initDefaultFavicon({
         document,
         selectors: { favicon: SELECTORS.favicon },
         removeCompetitors: true,
         insertFirst: true
     });
 
-    const GROK_FALLBACK_ICON = `${location.origin}/images/favicon.svg`;
-    const baseFaviconHref = (defaultIconHref && !/^data:/i.test(defaultIconHref))
-        ? defaultIconHref
-        : GROK_FALLBACK_ICON;
+    /* ----------  Scheme A: vector Grok mark + small SVG corner badge  ---------- */
+    const GROK_MARK_PATH = 'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815';
+
+    const BADGE = {
+        rotate: '#3B82F6',
+        done:   '#22C55E',
+        ready:  '#F59E0B',
+        error:  '#EF4444'
+    };
+
+    function grokMarkSvg() {
+        return [
+            '<rect width="64" height="64" rx="14" fill="#050505"/>',
+            '<g transform="translate(8 8) scale(2)" fill="#FCFCFC" fill-rule="evenodd">',
+            `<path d="${GROK_MARK_PATH}"/>`,
+            '</g>'
+        ].join('');
+    }
+
+    function badgeGlyph(kind) {
+        if (kind === 'rotate') {
+            return [
+                '<g transform="translate(51.5 51.5)">',
+                '<g>',
+                '<path d="M0-6.1 A6.1 6.1 0 1 1 -5.3 3.05" fill="none" stroke="#fff" stroke-width="2.15" stroke-linecap="round"/>',
+                '<animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.85s" repeatCount="indefinite"/>',
+                '</g>',
+                '</g>'
+            ].join('');
+        }
+        if (kind === 'done') {
+            return '<path d="M46.6 51.7 L50.1 55.3 L56.8 47.4" fill="none" stroke="#fff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>';
+        }
+        if (kind === 'ready') {
+            return [
+                '<path d="M51.5 56.4 V46.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>',
+                '<path d="M46.6 51.2 L51.5 46.2 L56.4 51.2" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
+            ].join('');
+        }
+        return [
+            '<path d="M47.2 47.2 L55.8 55.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>',
+            '<path d="M55.8 47.2 L47.2 55.8" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>'
+        ].join('');
+    }
+
+    function composeSvgIcon(kind) {
+        const color = BADGE[kind];
+        const badge = color
+            ? [
+                '<circle cx="51.5" cy="51.5" r="12.15" fill="#050505"/>',
+                `<circle cx="51.5" cy="51.5" r="9.55" fill="${color}"/>`,
+                badgeGlyph(kind)
+            ].join('')
+            : '';
+        const svg = [
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">',
+            grokMarkSvg(),
+            badge,
+            '</svg>'
+        ].join('');
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+
+    const overlayIcons = {
+        wait:   composeSvgIcon('wait'),
+        rotate: composeSvgIcon('rotate'),
+        done:   composeSvgIcon('done'),
+        ready:  composeSvgIcon('ready'),
+        error:  composeSvgIcon('error')
+    };
+    const baseFaviconHref = overlayIcons.wait;
+
+    if (guard?.updateDefaultHref) guard.updateDefaultHref(baseFaviconHref);
 
     let instance = null;
-
-    // observers / timers
     let buttonObserver = null;
     let rebinder = null;
     let urlTicker = null;
-
-    // state bookkeeping for SPA stability
     let lastUrlKey = null;
     let lastContextKey = null;
     let rafScheduled = false;
-    let buildGen = 0;
 
     function scheduleEvaluate() {
         if (!instance) return;
@@ -80,148 +140,11 @@
         });
     }
 
-    /* ----------  overlay badges (Grok-only; core still just swaps href)  ---------- */
-    const OVERLAY = {
-        size: 64,
-        cx: 48,
-        cy: 48,
-        ring: 16.2,
-        fill: 13.6,
-        colors: {
-            rotate: '#2563EB',
-            done:   '#16A34A',
-            ready:  '#D97706',
-            error:  '#DC2626'
-        }
-    };
-
-    function blobToDataUrl(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result || ''));
-            reader.onerror = () => reject(reader.error || new Error('readAsDataURL failed'));
-            reader.readAsDataURL(blob);
-        });
-    }
-
-    async function hrefToDataUrl(href) {
-        if (!href) return null;
-        if (/^data:/i.test(href)) return href;
-        const url = new URL(href, location.href).href;
-        try {
-            const res = await fetch(url, { credentials: 'include', cache: 'force-cache' });
-            if (!res.ok) throw new Error(String(res.status));
-            return await blobToDataUrl(await res.blob());
-        } catch {
-            return null;
-        }
-    }
-
-    function loadImage(src) {
-        return new Promise((resolve, reject) => {
-            const img = new Image();
-            img.decoding = 'async';
-            img.onload = () => resolve(img);
-            img.onerror = () => reject(new Error('favicon image load failed'));
-            img.src = src;
-        });
-    }
-
-    function fallbackBaseDataUrl() {
-        // Dark rounded square matching Grok's mark, used only if the live favicon cannot be read.
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#050505"/></svg>'
-        )}`;
-    }
-
-    async function rasterizeBase(href, size) {
-        const dataUrl = await hrefToDataUrl(href);
-        const src = dataUrl || href;
-        try {
-            const img = await loadImage(src);
-            const canvas = document.createElement('canvas');
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) throw new Error('no 2d context');
-            ctx.clearRect(0, 0, size, size);
-            ctx.drawImage(img, 0, 0, size, size);
-            return canvas.toDataURL('image/png');
-        } catch {
-            return dataUrl;
-        }
-    }
-
-    function badgeGlyph(kind) {
-        if (kind === 'rotate') {
-            return `
-              <g transform="translate(48 48)">
-                <g>
-                  <path d="M0-7.4 a7.4 7.4 0 1 1 -6.4 3.7" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
-                  <path d="M-7.6-1.2 L-3.8-0.2 L-6.2 3.4 Z" fill="#fff"/>
-                  <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.9s" repeatCount="indefinite"/>
-                </g>
-              </g>`;
-        }
-        if (kind === 'done') {
-            return '<polyline points="41.2,48.2 45.8,53 55.2,41.8" fill="none" stroke="#fff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round"/>';
-        }
-        if (kind === 'ready') {
-            return '<path d="M44.6 52.6 V45.8 h-2.1 c-1.35 0-2.15-1.15-1.85-2.4 l1.15-4.6 c.35-1.35 1.7-2.15 3-1.7 .65.22 1.1.85 1.2 1.55 l.35 3.15 h7.1 c1.4 0 2.45 1.25 2.15 2.65 l-1.2 5.2 c-.3 1.3-1.55 2.15-2.9 2.15 H44.6z" fill="#fff"/>';
-        }
-        return [
-            '<line x1="42.2" y1="42.2" x2="53.8" y2="53.8" stroke="#fff" stroke-width="3.1" stroke-linecap="round"/>',
-            '<line x1="53.8" y1="42.2" x2="42.2" y2="53.8" stroke="#fff" stroke-width="3.1" stroke-linecap="round"/>'
-        ].join('');
-    }
-
-    function composeOverlay(baseDataUrl, kind) {
-        const { size, cx, cy, ring, fill, colors } = OVERLAY;
-        const href = String(baseDataUrl)
-            .replace(/&/g, '\u0026amp;')
-            .replace(/"/g, '\u0026quot;')
-            .replace(/</g, '\u0026lt;');
-        const svg = [
-            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">`,
-            `<image href="${href}" x="0" y="0" width="${size}" height="${size}" preserveAspectRatio="xMidYMid meet"/>`,
-            `<circle cx="${cx}" cy="${cy}" r="${ring}" fill="#fff"/>`,
-            `<circle cx="${cx}" cy="${cy}" r="${fill}" fill="${colors[kind]}"/>`,
-            badgeGlyph(kind),
-            '</svg>'
-        ].join('');
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-    }
-
-    const overlayCache = new Map();
-
-    async function buildOverlayIcons(baseHref) {
-        const key = baseHref || '__none__';
-        if (overlayCache.has(key)) return overlayCache.get(key);
-
-        const raster = await rasterizeBase(baseHref, OVERLAY.size);
-        const base = raster || fallbackBaseDataUrl();
-        const icons = {
-            wait: baseHref || base,
-            rotate: composeOverlay(base, 'rotate'),
-            done: composeOverlay(base, 'done'),
-            ready: composeOverlay(base, 'ready'),
-            error: composeOverlay(base, 'error')
-        };
-        overlayCache.set(key, icons);
-        return icons;
-    }
-
-    /**
-     * Get the "active" editor (visible one preferred)
-     */
     function getActiveEditor() {
         const list = Array.from(document.querySelectorAll(SELECTORS.textarea));
         return list.find(isVisible) || list[0] || null;
     }
 
-    /**
-     * Get a reasonable composer root around the editor (used to scope queries/observers)
-     */
     function getComposerRoot() {
         const editor = getActiveEditor();
         return editor?.closest('form') || editor?.closest('div.relative') || editor?.parentElement || document.body;
@@ -236,17 +159,12 @@
         }
     }
 
-    /**
-     * Find the stop button during streaming (scope to composer root first).
-     * Grok 可能通过 aria-label 在同一按钮上切换 stop/submit，因此需要匹配 aria-label 或文本线索。
-     */
     function getStopButton() {
         const root = getComposerRoot() || document;
         const candidates = [];
         for (const sel of (Array.isArray(SELECTORS.stopBtn) ? SELECTORS.stopBtn : [SELECTORS.stopBtn])) {
             candidates.push(...root.querySelectorAll(sel));
         }
-        // Fallback: match aria-label or text content containing "stop" (limit to composer scope)
         if (candidates.length === 0) {
             for (const btn of queryButtons(root)) {
                 const label = btn.getAttribute('aria-label') || '';
@@ -258,7 +176,6 @@
     }
 
     function getConversationToken() {
-        // URL params (try common keys)
         const params = new URLSearchParams(location.search || '');
         const paramId =
             params.get('conversationId') ||
@@ -271,11 +188,9 @@
             params.get('id') ||
             '';
 
-        // pathname last segment (if it looks like an id-ish token)
         const lastSeg = location.pathname.split('/').filter(Boolean).slice(-1)[0] || '';
         const pathId = /^[a-z0-9_-]{8,}$/i.test(lastSeg) ? lastSeg : '';
 
-        // DOM data-* (best-effort; cheap selectors only)
         const pickAttr = (sel, attr) => document.querySelector(sel)?.getAttribute(attr) || '';
         const dataId =
             pickAttr('[data-conversation-id]', 'data-conversation-id') ||
@@ -285,16 +200,6 @@
             '';
 
         return [dataId, paramId, pathId].filter(Boolean).join('|');
-    }
-
-    /**
-     * Important:
-     * core 的 "done" 判定要求：streamContext === contextKey（严格全等）。
-     * 因此这里必须返回“稳定字符串”，不能在流式时返回 element、结束时又返回 string，否则会导致 done 漏判/乱跳。
-     */
-    function buildContextKey(token, sig) {
-        const urlKey = `${location.origin}${location.pathname}`;
-        return `${urlKey}|${token || ''}|${sig || 'no-sig'}`;
     }
 
     const contextLock = createContextLock({
@@ -308,30 +213,20 @@
         })
     });
 
-    /**
-     * Check if editor input is empty (ProseMirror)
-     */
     function isInputEmpty() {
         const editor = getActiveEditor();
         if (!editor) return true;
-
-        // ProseMirror empty placeholder pattern (best-effort)
         const emptyParagraph = editor.querySelector('p.is-empty.is-editor-empty');
         if (emptyParagraph) return true;
-
         const text = (editor.textContent || '').replace(/\u200B/g, '').trim();
         return text.length === 0;
     }
 
-    async function createInstance() {
-        const gen = ++buildGen;
-        const icons = await buildOverlayIcons(baseFaviconHref);
-        if (gen !== buildGen) return;
-
+    function createInstance() {
         instance = core.createStateFavicon({
             selectors: SELECTORS,
             defaultIconHref: baseFaviconHref,
-            icons,
+            icons: overlayIcons,
             submitEndsStreaming: true,
             stopSearchScope: () => [getComposerRoot() || document],
             stopMustBeVisible: true,
@@ -342,15 +237,10 @@
             }
         });
         instance.start();
-
-        // input listener makes state changes respond immediately even if observer misses a mutation
         bindInputListener();
         setupButtonObserver();
     }
 
-    /**
-     * Bind input listener once per editor node.
-     */
     function bindInputListener() {
         const editor = getActiveEditor();
         if (!editor || editor.__sfvBound) return;
@@ -359,13 +249,6 @@
         editor.__sfvBound = true;
     }
 
-    /**
-     * Custom MutationObserver to detect button state changes via aria-label/type.
-     * Core 的 localObserver 不观察 aria-label，因此必须补。
-     * 这里做两点稳定性增强：
-     *   1) 尽量将观察范围收敛到 composer root（找不到再退回 body）
-     *   2) 使用 rAF 节流，避免大量 aria-label 变动导致 evaluateState 抖动/卡顿
-     */
     function setupButtonObserver() {
         try { buttonObserver?.disconnect(); } catch {}
 
@@ -379,7 +262,6 @@
                         break;
                     }
                 } else if (m.type === 'childList') {
-                    // stop/submit button may be swapped in/out
                     if ((m.addedNodes && m.addedNodes.length) || (m.removedNodes && m.removedNodes.length)) {
                         scheduleEvaluate();
                         break;
@@ -398,27 +280,25 @@
         });
     }
 
-    async function restartInstance() {
+    function restartInstance() {
         try { instance?.stop(); } catch {}
         instance = null;
-        // reset to the original site icon (no badge) to avoid stale spin/done sticking
         const link = document.getElementById('state-favicon');
         if (link && baseFaviconHref) {
             link.href = baseFaviconHref;
             link.classList.remove('spin');
         }
-        await createInstance();
+        createInstance();
         if (guard?.updateDefaultHref && baseFaviconHref) guard.updateDefaultHref(baseFaviconHref);
         lastUrlKey = `${location.origin}${location.pathname}${location.search}${location.hash}`;
         lastContextKey = contextLock.getContextKey();
     }
 
-    async function init() {
-        await createInstance();
+    function init() {
+        createInstance();
         lastUrlKey = `${location.origin}${location.pathname}${location.search}${location.hash}`;
         lastContextKey = contextLock.getContextKey();
 
-        // DOM rebinder: rebind input + re-scope observer when composer/editor changes
         try { rebinder?.disconnect(); } catch {}
         rebinder = new MutationObserver(() => {
             bindInputListener();
@@ -430,13 +310,11 @@
                 return;
             }
 
-            // If composer root changed, rescope the button observer
             setupButtonObserver();
             scheduleEvaluate();
         });
         if (document.body) rebinder.observe(document.body, { childList: true, subtree: true, attributes: true });
 
-        // URL ticker: handle SPA route changes robustly
         if (urlTicker) clearInterval(urlTicker);
         urlTicker = setInterval(() => {
             const cur = `${location.origin}${location.pathname}${location.search}${location.hash}`;
