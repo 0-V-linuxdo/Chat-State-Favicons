@@ -1,14 +1,17 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20260819] v1.0.8
+// @name         [Grok] State Favicons [20260819] v1.0.9
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
-// @description  Keep a vector Grok mark and overlay a small SVG corner badge: streaming / done / ready / error. Idle = original mark, no badge.
-// @version      [20260819] v1.0.8
-// @update-log   方案 A：纯 SVG 重绘 Grok 标 + 右下角小角标（对勾/叉/弧/上箭头），不再栅格化替换整颗 favicon。
+// @description  Grok favicon states with switchable styles: A badge+glyph · B color dot · hole recolor · original icon.
+// @version      [20260819] v1.0.9
+// @update-log   油猴菜单可切换：原图标 / A 角标+符号 / B 纯色圆点 / 黑洞染色（用状态色替换黑洞）。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
 // @match        https://*.x.ai/*
-// @grant        none
+// @grant        GM_registerMenuCommand
+// @grant        GM_unregisterMenuCommand
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/state-favicon-core.js?v=20251215.0.0.4
 // @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/favicon-guard.js
 // @icon         https://grok.com/images/favicon.svg
@@ -17,14 +20,14 @@
 (() => {
     'use strict';
 
-    const core = window.StateFaviconCore;
+    const core = (typeof window !== 'undefined' && window.StateFaviconCore)
+        || (typeof self !== 'undefined' && self.StateFaviconCore);
     if (!core || typeof core.createStateFavicon !== 'function') {
         console.warn('[StateFavicons][Grok] Core module not found. Check @require path.');
         return;
     }
     const { isVisible, createContextLock, initDefaultFavicon, lazySignature, buildContextKeyFromUrl } = core.utils;
 
-    /* ----------  selectors tailored for Grok  ---------- */
     const SELECTORS = {
         textarea : '.tiptap.ProseMirror[contenteditable="true"]',
         stopBtn  : [
@@ -41,14 +44,25 @@
         favicon  : 'link[rel="icon"][type="image/svg+xml"], link[rel~="icon"]'
     };
 
-    const { guard } = initDefaultFavicon({
+    const { defaultIconHref, guard } = initDefaultFavicon({
         document,
         selectors: { favicon: SELECTORS.favicon },
         removeCompetitors: true,
         insertFirst: true
     });
 
-    /* ----------  Scheme A: vector Grok mark + small SVG corner badge  ---------- */
+    const officialHref = (defaultIconHref && !/^data:/i.test(defaultIconHref))
+        ? defaultIconHref
+        : `${location.origin}/images/favicon.svg`;
+
+    const STORE_KEY = 'sfv-grok-style';
+    const STYLES = [
+        { id: 'original', label: '原图标' },
+        { id: 'a',        label: 'A 角标+符号' },
+        { id: 'b',        label: 'B 纯色圆点' },
+        { id: 'hole',     label: '黑洞染色' }
+    ];
+
     const GROK_MARK_PATH = 'M9.27 15.29l7.978-5.897c.391-.29.95-.177 1.137.272.98 2.369.542 5.215-1.41 7.169-1.951 1.954-4.667 2.382-7.149 1.406l-2.711 1.257c3.889 2.661 8.611 2.003 11.562-.953 2.341-2.344 3.066-5.539 2.388-8.42l.006.007c-.983-4.232.242-5.924 2.75-9.383.06-.082.12-.164.179-.248l-3.301 3.305v-.01L9.267 15.292M7.623 16.723c-2.792-2.67-2.31-6.801.071-9.184 1.761-1.763 4.647-2.483 7.166-1.425l2.705-1.25a7.808 7.808 0 00-1.829-1A8.975 8.975 0 005.984 5.83c-2.533 2.536-3.33 6.436-1.962 9.764 1.022 2.487-.653 4.246-2.34 6.022-.599.63-1.199 1.259-1.682 1.925l7.62-6.815';
 
     const BADGE = {
@@ -58,24 +72,54 @@
         error:  '#EF4444'
     };
 
-    function grokMarkSvg() {
+    const HOLE_IDLE = '#050505';
+
+    function readStoredStyle() {
+        try {
+            if (typeof GM_getValue === 'function') {
+                const v = GM_getValue(STORE_KEY, '');
+                if (v) return v;
+            }
+        } catch { /* ignore */ }
+        try {
+            return localStorage.getItem(STORE_KEY) || '';
+        } catch {
+            return '';
+        }
+    }
+
+    function writeStoredStyle(id) {
+        try { if (typeof GM_setValue === 'function') GM_setValue(STORE_KEY, id); } catch { /* ignore */ }
+        try { localStorage.setItem(STORE_KEY, id); } catch { /* ignore */ }
+    }
+
+    function normalizeStyle(id) {
+        return STYLES.some((s) => s.id === id) ? id : 'a';
+    }
+
+    let currentStyle = normalizeStyle(readStoredStyle());
+
+    function grokMarkSvg(holeColor) {
         return [
-            '<rect width="64" height="64" rx="14" fill="#050505"/>',
+            `<rect width="64" height="64" rx="14" fill="${holeColor || HOLE_IDLE}"/>`,
             '<g transform="translate(8 8) scale(2)" fill="#FCFCFC" fill-rule="evenodd">',
             `<path d="${GROK_MARK_PATH}"/>`,
             '</g>'
         ].join('');
     }
 
+    function toSvgData(inner) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">${inner}</svg>`;
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+
     function badgeGlyph(kind) {
         if (kind === 'rotate') {
             return [
-                '<g transform="translate(51.5 51.5)">',
-                '<g>',
+                '<g transform="translate(51.5 51.5)"><g>',
                 '<path d="M0-6.1 A6.1 6.1 0 1 1 -5.3 3.05" fill="none" stroke="#fff" stroke-width="2.15" stroke-linecap="round"/>',
                 '<animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.85s" repeatCount="indefinite"/>',
-                '</g>',
-                '</g>'
+                '</g></g>'
             ].join('');
         }
         if (kind === 'done') {
@@ -93,33 +137,45 @@
         ].join('');
     }
 
-    function composeSvgIcon(kind) {
+    function composeSvgIcon(kind, style) {
+        if (style === 'original') return officialHref;
+
         const color = BADGE[kind];
-        const badge = color
-            ? [
-                '<circle cx="51.5" cy="51.5" r="12.15" fill="#050505"/>',
-                `<circle cx="51.5" cy="51.5" r="9.55" fill="${color}"/>`,
-                badgeGlyph(kind)
-            ].join('')
-            : '';
-        const svg = [
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">',
-            grokMarkSvg(),
-            badge,
-            '</svg>'
-        ].join('');
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+
+        if (style === 'hole') {
+            return toSvgData(grokMarkSvg(color || HOLE_IDLE));
+        }
+
+        let badge = '';
+        if (color) {
+            if (style === 'b') {
+                badge = [
+                    '<circle cx="52.2" cy="52.2" r="10.4" fill="#050505"/>',
+                    `<circle cx="52.2" cy="52.2" r="7.7" fill="${color}"/>`
+                ].join('');
+            } else {
+                badge = [
+                    '<circle cx="51.5" cy="51.5" r="12.15" fill="#050505"/>',
+                    `<circle cx="51.5" cy="51.5" r="9.55" fill="${color}"/>`,
+                    badgeGlyph(kind)
+                ].join('');
+            }
+        }
+        return toSvgData(grokMarkSvg(HOLE_IDLE) + badge);
     }
 
-    const overlayIcons = {
-        wait:   composeSvgIcon('wait'),
-        rotate: composeSvgIcon('rotate'),
-        done:   composeSvgIcon('done'),
-        ready:  composeSvgIcon('ready'),
-        error:  composeSvgIcon('error')
-    };
-    const baseFaviconHref = overlayIcons.wait;
+    function buildIcons(style) {
+        return {
+            wait:   composeSvgIcon('wait', style),
+            rotate: composeSvgIcon('rotate', style),
+            done:   composeSvgIcon('done', style),
+            ready:  composeSvgIcon('ready', style),
+            error:  composeSvgIcon('error', style)
+        };
+    }
 
+    let overlayIcons = buildIcons(currentStyle);
+    let baseFaviconHref = overlayIcons.wait;
     if (guard?.updateDefaultHref) guard.updateDefaultHref(baseFaviconHref);
 
     let instance = null;
@@ -129,6 +185,7 @@
     let lastUrlKey = null;
     let lastContextKey = null;
     let rafScheduled = false;
+    const menuIds = [];
 
     function scheduleEvaluate() {
         if (!instance) return;
@@ -138,6 +195,47 @@
             rafScheduled = false;
             instance?.evaluateState();
         });
+    }
+
+    function applyStyle(id) {
+        currentStyle = normalizeStyle(id);
+        writeStoredStyle(currentStyle);
+        overlayIcons = buildIcons(currentStyle);
+        baseFaviconHref = overlayIcons.wait;
+        if (instance && typeof instance.updateIcons === 'function') {
+            instance.updateIcons(overlayIcons);
+            if (typeof instance.updateDefaultIcon === 'function') instance.updateDefaultIcon(baseFaviconHref);
+            instance.evaluateState();
+        }
+        if (guard?.updateDefaultHref) guard.updateDefaultHref(baseFaviconHref);
+        const link = document.getElementById('state-favicon');
+        if (link && currentStyle === 'original') {
+            link.href = officialHref;
+            link.classList.remove('spin');
+        }
+        registerMenus();
+    }
+
+    function registerMenus() {
+        const register = (typeof GM_registerMenuCommand === 'function') ? GM_registerMenuCommand : null;
+        const unregister = (typeof GM_unregisterMenuCommand === 'function') ? GM_unregisterMenuCommand : null;
+        if (!register) return;
+
+        while (menuIds.length) {
+            const id = menuIds.pop();
+            try { if (unregister) unregister(id); } catch { /* ignore */ }
+        }
+
+        for (const style of STYLES) {
+            const mark = style.id === currentStyle ? '✓ ' : '　';
+            const name = `${mark}样式：${style.label}`;
+            try {
+                const id = register(name, () => applyStyle(style.id), style.id);
+                if (id !== undefined && id !== null) menuIds.push(id);
+            } catch {
+                try { register(name, () => applyStyle(style.id)); } catch { /* ignore */ }
+            }
+        }
     }
 
     function getActiveEditor() {
@@ -223,6 +321,8 @@
     }
 
     function createInstance() {
+        overlayIcons = buildIcons(currentStyle);
+        baseFaviconHref = overlayIcons.wait;
         instance = core.createStateFavicon({
             selectors: SELECTORS,
             defaultIconHref: baseFaviconHref,
@@ -296,6 +396,7 @@
 
     function init() {
         createInstance();
+        registerMenus();
         lastUrlKey = `${location.origin}${location.pathname}${location.search}${location.hash}`;
         lastContextKey = contextLock.getContextKey();
 
