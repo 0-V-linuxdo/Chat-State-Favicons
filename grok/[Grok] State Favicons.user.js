@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20260819] v1.1.2
+// @name         [Grok] State Favicons [20260819] v1.1.3
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
-// @description  Grok favicon states. Menu: original · A badge · B dot · recolor black-hole mark · recolor background.
-// @version      [20260819] v1.1.2
-// @update-log   新增「背景染色」菜单项。黑洞染色只换中间白色图形；背景染色只换外框黑底。
+// @description  Grok favicon states. Menu: original emoji replace · corner badge · color dot · hole mark · background.
+// @version      [20260819] v1.1.3
+// @update-log   「原图标」改回最初的整颗 emoji 替换；菜单去掉 A、B 字样。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
@@ -55,11 +55,19 @@
         ? defaultIconHref
         : `${location.origin}/images/favicon.svg`;
 
+    const ORIGINAL_ICONS = {
+        wait:   officialHref,
+        rotate: 'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f504.png',
+        done:   'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/2714.png',
+        ready:  'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f44d.png',
+        error:  'https://raw.githubusercontent.com/twitter/twemoji/master/assets/72x72/1f6ab.png'
+    };
+
     const STORE_KEY = 'sfv-grok-style';
     const STYLES = [
         { id: 'original', label: '原图标' },
-        { id: 'a',        label: 'A 角标+符号' },
-        { id: 'b',        label: 'B 纯色圆点' },
+        { id: 'a',        label: '角标+符号' },
+        { id: 'b',        label: '纯色圆点' },
         { id: 'hole',     label: '黑洞染色' },
         { id: 'bg',       label: '背景染色' }
     ];
@@ -151,7 +159,7 @@
     }
 
     function composeSvgIcon(kind, style) {
-        if (style === 'original') return officialHref;
+        if (style === 'original') return ORIGINAL_ICONS[kind] || officialHref;
 
         const color = BADGE[kind];
 
@@ -224,11 +232,6 @@
             instance.evaluateState();
         }
         if (guard?.updateDefaultHref) guard.updateDefaultHref(baseFaviconHref);
-        const link = document.getElementById('state-favicon');
-        if (link && currentStyle === 'original') {
-            link.href = officialHref;
-            link.classList.remove('spin');
-        }
         registerMenus();
     }
 
