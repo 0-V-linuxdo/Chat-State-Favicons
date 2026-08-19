@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20251215] v1.0.6
+// @name         [Grok] State Favicons [20260819] v1.0.7
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
-// @description  Dynamic favicon for Grok (x.ai): 🔄 streaming · ✔️ done · 👍 ready · 🚫 error · default waiting. Uses the shared core module with Grok-specific selectors/hooks.
-// @version      [20251215] v1.0.6
-// @update-log   使用 core lazySignature/buildContextKeyFromUrl 复用上下文/签名构造；版本升级至 v1.0.6。
+// @description  Keep the Grok favicon and overlay a corner status badge: 🔄 streaming · ✔️ done · 👍 ready · 🚫 error · idle = original icon.
+// @version      [20260819] v1.0.7
+// @update-log   不再整颗替换 favicon，改为在原站点图标右下角叠加状态徽标（仅 Grok 脚本）。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
@@ -11,7 +11,7 @@
 // @grant        none
 // @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/state-favicon-core.js?v=20251215.0.0.4
 // @require      https://github.com/0-V-linuxdo/Chat-State-Favicons/raw/refs/heads/main/core/favicon-guard.js
-// @icon         https://grok.com/favicon.ico
+// @icon         https://grok.com/images/favicon.svg
 // ==/UserScript==
 
 (() => {
@@ -41,7 +41,8 @@
             'button[type="submit"]',
             'button:not([aria-label*="Stop" i])'
         ],
-        favicon  : 'link[rel~="icon"]'
+        // Prefer the official SVG mark so the overlay sits on a crisp base.
+        favicon  : 'link[rel="icon"][type="image/svg+xml"], link[rel~="icon"]'
     };
 
     const { defaultIconHref, guard } = initDefaultFavicon({
@@ -50,6 +51,12 @@
         removeCompetitors: true,
         insertFirst: true
     });
+
+    const GROK_FALLBACK_ICON = `${location.origin}/images/favicon.svg`;
+    const baseFaviconHref = (defaultIconHref && !/^data:/i.test(defaultIconHref))
+        ? defaultIconHref
+        : GROK_FALLBACK_ICON;
+
     let instance = null;
 
     // observers / timers
@@ -61,6 +68,7 @@
     let lastUrlKey = null;
     let lastContextKey = null;
     let rafScheduled = false;
+    let buildGen = 0;
 
     function scheduleEvaluate() {
         if (!instance) return;
@@ -70,6 +78,137 @@
             rafScheduled = false;
             instance?.evaluateState();
         });
+    }
+
+    /* ----------  overlay badges (Grok-only; core still just swaps href)  ---------- */
+    const OVERLAY = {
+        size: 64,
+        cx: 48,
+        cy: 48,
+        ring: 16.2,
+        fill: 13.6,
+        colors: {
+            rotate: '#2563EB',
+            done:   '#16A34A',
+            ready:  '#D97706',
+            error:  '#DC2626'
+        }
+    };
+
+    function blobToDataUrl(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(reader.error || new Error('readAsDataURL failed'));
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    async function hrefToDataUrl(href) {
+        if (!href) return null;
+        if (/^data:/i.test(href)) return href;
+        const url = new URL(href, location.href).href;
+        try {
+            const res = await fetch(url, { credentials: 'include', cache: 'force-cache' });
+            if (!res.ok) throw new Error(String(res.status));
+            return await blobToDataUrl(await res.blob());
+        } catch {
+            return null;
+        }
+    }
+
+    function loadImage(src) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.decoding = 'async';
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error('favicon image load failed'));
+            img.src = src;
+        });
+    }
+
+    function fallbackBaseDataUrl() {
+        // Dark rounded square matching Grok's mark, used only if the live favicon cannot be read.
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#050505"/></svg>'
+        )}`;
+    }
+
+    async function rasterizeBase(href, size) {
+        const dataUrl = await hrefToDataUrl(href);
+        const src = dataUrl || href;
+        try {
+            const img = await loadImage(src);
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error('no 2d context');
+            ctx.clearRect(0, 0, size, size);
+            ctx.drawImage(img, 0, 0, size, size);
+            return canvas.toDataURL('image/png');
+        } catch {
+            return dataUrl;
+        }
+    }
+
+    function badgeGlyph(kind) {
+        if (kind === 'rotate') {
+            return `
+              <g transform="translate(48 48)">
+                <g>
+                  <path d="M0-7.4 a7.4 7.4 0 1 1 -6.4 3.7" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+                  <path d="M-7.6-1.2 L-3.8-0.2 L-6.2 3.4 Z" fill="#fff"/>
+                  <animateTransform attributeName="transform" type="rotate" from="0" to="360" dur="0.9s" repeatCount="indefinite"/>
+                </g>
+              </g>`;
+        }
+        if (kind === 'done') {
+            return '<polyline points="41.2,48.2 45.8,53 55.2,41.8" fill="none" stroke="#fff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round"/>';
+        }
+        if (kind === 'ready') {
+            return '<path d="M44.6 52.6 V45.8 h-2.1 c-1.35 0-2.15-1.15-1.85-2.4 l1.15-4.6 c.35-1.35 1.7-2.15 3-1.7 .65.22 1.1.85 1.2 1.55 l.35 3.15 h7.1 c1.4 0 2.45 1.25 2.15 2.65 l-1.2 5.2 c-.3 1.3-1.55 2.15-2.9 2.15 H44.6z" fill="#fff"/>';
+        }
+        return [
+            '<line x1="42.2" y1="42.2" x2="53.8" y2="53.8" stroke="#fff" stroke-width="3.1" stroke-linecap="round"/>',
+            '<line x1="53.8" y1="42.2" x2="42.2" y2="53.8" stroke="#fff" stroke-width="3.1" stroke-linecap="round"/>'
+        ].join('');
+    }
+
+    function composeOverlay(baseDataUrl, kind) {
+        const { size, cx, cy, ring, fill, colors } = OVERLAY;
+        const href = String(baseDataUrl)
+            .replace(/&/g, '\u0026amp;')
+            .replace(/"/g, '\u0026quot;')
+            .replace(/</g, '\u0026lt;');
+        const svg = [
+            `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">`,
+            `<image href="${href}" x="0" y="0" width="${size}" height="${size}" preserveAspectRatio="xMidYMid meet"/>`,
+            `<circle cx="${cx}" cy="${cy}" r="${ring}" fill="#fff"/>`,
+            `<circle cx="${cx}" cy="${cy}" r="${fill}" fill="${colors[kind]}"/>`,
+            badgeGlyph(kind),
+            '</svg>'
+        ].join('');
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    }
+
+    const overlayCache = new Map();
+
+    async function buildOverlayIcons(baseHref) {
+        const key = baseHref || '__none__';
+        if (overlayCache.has(key)) return overlayCache.get(key);
+
+        const raster = await rasterizeBase(baseHref, OVERLAY.size);
+        const base = raster || fallbackBaseDataUrl();
+        const icons = {
+            wait: baseHref || base,
+            rotate: composeOverlay(base, 'rotate'),
+            done: composeOverlay(base, 'done'),
+            ready: composeOverlay(base, 'ready'),
+            error: composeOverlay(base, 'error')
+        };
+        overlayCache.set(key, icons);
+        return icons;
     }
 
     /**
@@ -184,10 +323,15 @@
         return text.length === 0;
     }
 
-    function createInstance() {
+    async function createInstance() {
+        const gen = ++buildGen;
+        const icons = await buildOverlayIcons(baseFaviconHref);
+        if (gen !== buildGen) return;
+
         instance = core.createStateFavicon({
             selectors: SELECTORS,
-            defaultIconHref,
+            defaultIconHref: baseFaviconHref,
+            icons,
             submitEndsStreaming: true,
             stopSearchScope: () => [getComposerRoot() || document],
             stopMustBeVisible: true,
@@ -254,22 +398,23 @@
         });
     }
 
-    function restartInstance() {
+    async function restartInstance() {
         try { instance?.stop(); } catch {}
-        // reset to wait icon to avoid stale spin/done sticking
+        instance = null;
+        // reset to the original site icon (no badge) to avoid stale spin/done sticking
         const link = document.getElementById('state-favicon');
-        if (link && defaultIconHref) {
-            link.href = defaultIconHref;
+        if (link && baseFaviconHref) {
+            link.href = baseFaviconHref;
             link.classList.remove('spin');
         }
-        createInstance();
-        if (guard?.updateDefaultHref && defaultIconHref) guard.updateDefaultHref(defaultIconHref);
+        await createInstance();
+        if (guard?.updateDefaultHref && baseFaviconHref) guard.updateDefaultHref(baseFaviconHref);
         lastUrlKey = `${location.origin}${location.pathname}${location.search}${location.hash}`;
         lastContextKey = contextLock.getContextKey();
     }
 
-    function init() {
-        createInstance();
+    async function init() {
+        await createInstance();
         lastUrlKey = `${location.origin}${location.pathname}${location.search}${location.hash}`;
         lastContextKey = contextLock.getContextKey();
 
