@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         [Grok] State Favicons [20260819] v1.1.3
+// @name         [Grok] State Favicons [20260819] v1.1.4
 // @namespace    https://github.com/0-V-linuxdo/Chat-State-Favicons/tree/main
-// @description  Grok favicon states. Menu: original emoji replace · corner badge · color dot · hole mark · background.
-// @version      [20260819] v1.1.3
-// @update-log   「原图标」改回最初的整颗 emoji 替换；菜单去掉 A、B 字样。
+// @description  Grok favicon states. Menu: 1 original · 2 badge · 3 dot · 4 hole · 5 background.
+// @version      [20260819] v1.1.4
+// @update-log   油猴菜单改为 1–5 序号，去掉「样式：」前缀。
 // @match        https://grok.com/*
 // @match        https://*.grok.com/*
 // @match        https://x.ai/*
@@ -245,16 +245,16 @@
             try { if (unregister) unregister(id); } catch { /* ignore */ }
         }
 
-        for (const style of STYLES) {
+        STYLES.forEach((style, index) => {
             const mark = style.id === currentStyle ? '✓ ' : '　';
-            const name = `${mark}样式：${style.label}`;
+            const name = `${mark}${index + 1} ${style.label}`;
             try {
                 const id = register(name, () => applyStyle(style.id), style.id);
                 if (id !== undefined && id !== null) menuIds.push(id);
             } catch {
                 try { register(name, () => applyStyle(style.id)); } catch { /* ignore */ }
             }
-        }
+        });
     }
 
     function getActiveEditor() {
